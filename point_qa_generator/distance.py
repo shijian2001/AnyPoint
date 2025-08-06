@@ -1,3 +1,4 @@
+import numpy as np
 from typing import List, Dict, Any, Tuple
 from .base import BasePointQAGenerator, TaskPlan, Task
 from .utils import (get_relative_distance_level, get_max_distance_level,
@@ -197,7 +198,7 @@ class WhereDistanceGenerator(DistanceGenerator):
 
             point_cloud = self._create_point_cloud_scene(all_objects, all_grids, angles)
 
-            question = f"Where is the object that is {distance_type} from the {ref_obj['object_name']} in the image?"
+            question = f"Where is the object that is {distance_type} from the {ref_obj['object_name']} in the scene?"
             correct_answer = GRID_POSITIONS[target_grid]
             candidates = [GRID_POSITIONS[g] for g in range(9) if g != target_grid]
 
