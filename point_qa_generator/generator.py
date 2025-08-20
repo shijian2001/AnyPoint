@@ -4,26 +4,36 @@ from typing import Dict
 import numpy as np
 from .base import TaskPlan
 from .metadata import PointCloudMetadata
-from .distance import WhatDistanceGenerator, WhereDistanceGenerator
+from .distance import (WhatDistanceGenerator, WhereDistanceGenerator,
+                       ListAttributeDistanceGenerator, CountAttributeDistanceGenerator)
+from .attribute import (WhatAttributeGenerator, ListAttributeGenerator,
+                        CountAttributeGenerator)
 
 
 class PointQAGenerator:
     """Main interface for Point QA generation."""
 
-    def __init__(self, json_file: str, pcd_dir: str, seed: int = 42):
+    def __init__(self, jsonl_file: str, pcd_dir: str, seed: int = 42):
         """
         Initialize Point QA Generator.
 
         Args:
-            json_file: Path to object metadata JSON file
+            jsonl_file: Path to object metadata JSONL file
             pcd_dir: Directory containing point cloud .npy files
             seed: Random seed
         """
-        self.metadata = PointCloudMetadata(json_file, pcd_dir, seed)
+        self.metadata = PointCloudMetadata(jsonl_file, pcd_dir, seed)
         self.generators = {
+            # Distance-based generators
             "what_distance": WhatDistanceGenerator(self.metadata, seed),
-            "where_distance": WhereDistanceGenerator(self.metadata, seed)
-            ## TODO: ...
+            "where_distance": WhereDistanceGenerator(self.metadata, seed),
+            "list_attribute_distance": ListAttributeDistanceGenerator(self.metadata, seed),
+            "count_attribute_distance": CountAttributeDistanceGenerator(self.metadata, seed),
+
+            # Attribute-based generators
+            "what_attribute": WhatAttributeGenerator(self.metadata, seed),
+            "list_attribute": ListAttributeGenerator(self.metadata, seed),
+            "count_attribute": CountAttributeGenerator(self.metadata, seed)
         }
 
     def generate(self, task_plan: TaskPlan, num_tasks: int, output_dir: str) -> Dict[str, any]:

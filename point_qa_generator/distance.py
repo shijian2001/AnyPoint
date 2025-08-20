@@ -1,5 +1,6 @@
 import numpy as np
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Set
+from tqdm import tqdm
 from .base import BasePointQAGenerator, TaskPlan, Task
 from .utils import (get_relative_distance_level, get_max_distance_level,
                     get_farther_grids, get_closer_grids, GRID_POSITIONS)
@@ -64,7 +65,7 @@ class DistanceGenerator(BasePointQAGenerator):
 
 
 class WhatDistanceGenerator(DistanceGenerator):
-    """Generator for 'What object is closest/farthest?' questions."""
+    """Generator for 'What is the object that is closest/farthest from the {reference_object}?' questions."""
 
     def count_possible_tasks(self, task_plan: TaskPlan) -> int:
         """Count possible task combinations."""
@@ -91,61 +92,63 @@ class WhatDistanceGenerator(DistanceGenerator):
         tasks = []
         seen_combinations = set()
 
-        while len(tasks) < num_tasks:
-            target_obj, ref_obj = self.rng.choice(self.metadata.objects, size=2, replace=False)
-            target_grid, ref_grid = self.rng.randint(0, 9, size=2)
+        with tqdm(total=num_tasks, desc=f"Generating what-{distance_type} tasks") as pbar:
+            while len(tasks) < num_tasks:
+                target_obj, ref_obj = self.rng.choice(self.metadata.objects, size=2, replace=False)
+                target_grid, ref_grid = self.rng.randint(0, 9, size=2)
 
-            if not self._is_valid_distance_combination(ref_grid, target_grid, distance_type):
-                continue
+                if not self._is_valid_distance_combination(ref_grid, target_grid, distance_type):
+                    continue
 
-            combo_key = (target_obj["object_id"], ref_obj["object_id"], target_grid, ref_grid)
-            if combo_key in seen_combinations:
-                continue
-            seen_combinations.add(combo_key)
+                combo_key = (target_obj["object_id"], ref_obj["object_id"], target_grid, ref_grid)
+                if combo_key in seen_combinations:
+                    continue
+                seen_combinations.add(combo_key)
 
-            # Generate scene
-            scene_distractor_objects = self._generate_scene_distractors(task_plan, target_obj, ref_obj)
-            scene_distractor_grids = self._get_scene_distractor_grids(task_plan, ref_grid, target_grid)
+                # Generate scene
+                scene_distractor_objects = self._generate_scene_distractors(task_plan, target_obj, ref_obj)
+                scene_distractor_grids = self._get_scene_distractor_grids(task_plan, ref_grid, target_grid)
 
-            actual_num_distractors = min(len(scene_distractor_objects), len(scene_distractor_grids))
-            scene_distractor_objects = scene_distractor_objects[:actual_num_distractors]
-            scene_distractor_grids = scene_distractor_grids[:actual_num_distractors]
+                actual_num_distractors = min(len(scene_distractor_objects), len(scene_distractor_grids))
+                scene_distractor_objects = scene_distractor_objects[:actual_num_distractors]
+                scene_distractor_grids = scene_distractor_grids[:actual_num_distractors]
 
-            all_objects = [target_obj, ref_obj] + scene_distractor_objects
-            all_grids = [target_grid, ref_grid] + scene_distractor_grids
-            angles = [self.metadata.sample_angle() for _ in all_objects]
+                all_objects = [target_obj, ref_obj] + scene_distractor_objects
+                all_grids = [target_grid, ref_grid] + scene_distractor_grids
+                angles = [self.metadata.sample_angle() for _ in all_objects]
 
-            point_cloud = self._create_point_cloud_scene(all_objects, all_grids, angles)
+                point_cloud = self._create_point_cloud_scene(all_objects, all_grids, angles)
 
-            # Generate QA
-            question = f"What is the object that is {distance_type} from the {ref_obj['object_name']}?"
-            correct_answer = target_obj["object_name"]
+                # Generate QA
+                question = f"What is the object that is {distance_type} from the {ref_obj['object_name']}?"
+                correct_answer = target_obj["object_name"]
 
-            scene_object_names = [obj["object_name"] for obj in all_objects if obj != target_obj]
-            random_object_names = [obj["object_name"] for obj in self.rng.choice(
-                [obj for obj in self.metadata.objects if obj not in all_objects],
-                size=min(10, len(self.metadata.objects) - len(all_objects)),
-                replace=False
-            )] if len(self.metadata.objects) > len(all_objects) else []
+                scene_object_names = [obj["object_name"] for obj in all_objects if obj != target_obj]
+                random_object_names = [obj["object_name"] for obj in self.rng.choice(
+                    [obj for obj in self.metadata.objects if obj not in all_objects],
+                    size=min(10, len(self.metadata.objects) - len(all_objects)),
+                    replace=False
+                )] if len(self.metadata.objects) > len(all_objects) else []
 
-            candidates = list(dict.fromkeys(scene_object_names + random_object_names))  # Remove duplicates
-            options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                candidates = list(dict.fromkeys(scene_object_names + random_object_names))
+                options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
 
-            task = Task(
-                point=f"{len(tasks):06d}.npy",
-                question=question,
-                options=options,
-                answer=correct_answer,
-                answer_id=answer_id
-            )
+                task = Task(
+                    point=f"{len(tasks):06d}.npy",
+                    question=question,
+                    options=options,
+                    answer=correct_answer,
+                    answer_id=answer_id
+                )
 
-            tasks.append((task, point_cloud))
+                tasks.append((task, point_cloud))
+                pbar.update(1)
 
         return tasks
 
 
 class WhereDistanceGenerator(DistanceGenerator):
-    """Generator for 'Where is the closest/farthest object?' questions."""
+    """Generator for 'Where is the object that is closest/farthest from the {reference_object}?' questions."""
 
     def count_possible_tasks(self, task_plan: TaskPlan) -> int:
         """Count possible task combinations."""
@@ -172,46 +175,277 @@ class WhereDistanceGenerator(DistanceGenerator):
         tasks = []
         seen_combinations = set()
 
-        while len(tasks) < num_tasks:
-            target_obj, ref_obj = self.rng.choice(self.metadata.objects, size=2, replace=False)
-            target_grid, ref_grid = self.rng.randint(0, 9, size=2)
+        with tqdm(total=num_tasks, desc=f"Generating where-{distance_type} tasks") as pbar:
+            while len(tasks) < num_tasks:
+                target_obj, ref_obj = self.rng.choice(self.metadata.objects, size=2, replace=False)
+                target_grid, ref_grid = self.rng.randint(0, 9, size=2)
 
-            if not self._is_valid_distance_combination(ref_grid, target_grid, distance_type):
-                continue
+                if not self._is_valid_distance_combination(ref_grid, target_grid, distance_type):
+                    continue
 
-            combo_key = (target_obj["object_id"], ref_obj["object_id"], target_grid, ref_grid)
-            if combo_key in seen_combinations:
-                continue
-            seen_combinations.add(combo_key)
+                combo_key = (target_obj["object_id"], ref_obj["object_id"], target_grid, ref_grid)
+                if combo_key in seen_combinations:
+                    continue
+                seen_combinations.add(combo_key)
 
-            # Generate scene (same as WhatDistanceGenerator)
-            scene_distractor_objects = self._generate_scene_distractors(task_plan, target_obj, ref_obj)
-            scene_distractor_grids = self._get_scene_distractor_grids(task_plan, ref_grid, target_grid)
+                # Generate scene
+                scene_distractor_objects = self._generate_scene_distractors(task_plan, target_obj, ref_obj)
+                scene_distractor_grids = self._get_scene_distractor_grids(task_plan, ref_grid, target_grid)
 
-            actual_num_distractors = min(len(scene_distractor_objects), len(scene_distractor_grids))
-            scene_distractor_objects = scene_distractor_objects[:actual_num_distractors]
-            scene_distractor_grids = scene_distractor_grids[:actual_num_distractors]
+                actual_num_distractors = min(len(scene_distractor_objects), len(scene_distractor_grids))
+                scene_distractor_objects = scene_distractor_objects[:actual_num_distractors]
+                scene_distractor_grids = scene_distractor_grids[:actual_num_distractors]
 
-            all_objects = [target_obj, ref_obj] + scene_distractor_objects
-            all_grids = [target_grid, ref_grid] + scene_distractor_grids
-            angles = [self.metadata.sample_angle() for _ in all_objects]
+                all_objects = [target_obj, ref_obj] + scene_distractor_objects
+                all_grids = [target_grid, ref_grid] + scene_distractor_grids
+                angles = [self.metadata.sample_angle() for _ in all_objects]
 
-            point_cloud = self._create_point_cloud_scene(all_objects, all_grids, angles)
+                point_cloud = self._create_point_cloud_scene(all_objects, all_grids, angles)
 
-            question = f"Where is the object that is {distance_type} from the {ref_obj['object_name']} in the scene?"
-            correct_answer = GRID_POSITIONS[target_grid]
-            candidates = [GRID_POSITIONS[g] for g in range(9) if g != target_grid]
+                question = f"Where is the object that is {distance_type} from the {ref_obj['object_name']}?"
+                correct_answer = GRID_POSITIONS[target_grid]
+                candidates = [GRID_POSITIONS[g] for g in range(9) if g != target_grid]
 
-            options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
 
-            task = Task(
-                point=f"{len(tasks):06d}.npy",
-                question=question,
-                options=options,
-                answer=correct_answer,
-                answer_id=answer_id
-            )
+                task = Task(
+                    point=f"{len(tasks):06d}.npy",
+                    question=question,
+                    options=options,
+                    answer=correct_answer,
+                    answer_id=answer_id
+                )
 
-            tasks.append((task, point_cloud))
+                tasks.append((task, point_cloud))
+                pbar.update(1)
+
+        return tasks
+
+
+class ListAttributeDistanceGenerator(DistanceGenerator):
+    """Generator for 'List all {attribute}s in the components of the object closest/farthest from {reference_object}.' questions."""
+
+    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
+        """Count possible task combinations."""
+        self.validate_generator_config(task_plan.generator_config)
+        distance_type = self._get_distance_type(task_plan)
+
+        valid_combinations = 0
+        for target_grid in range(9):
+            for ref_grid in range(9):
+                if self._is_valid_distance_combination(ref_grid, target_grid, distance_type):
+                    valid_combinations += 1
+
+        # Count objects that have components with attributes
+        valid_targets = 0
+        for obj in self.metadata.objects:
+            for attribute in ["material", "color", "shape", "texture"]:
+                if self.metadata.has_components_with_attribute(obj, attribute):
+                    valid_targets += 1
+                    break
+
+        return valid_combinations * valid_targets * len(self.metadata.objects) * 4  # 4 attributes
+
+    def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
+        """Generate list-attribute-distance tasks."""
+        self.validate_generator_config(task_plan.generator_config)
+        distance_type = self._get_distance_type(task_plan)
+
+        possible_tasks = self.count_possible_tasks(task_plan)
+        if num_tasks > possible_tasks:
+            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
+
+        tasks = []
+        seen_combinations = set()
+
+        with tqdm(total=num_tasks, desc=f"Generating list-attribute-{distance_type} tasks") as pbar:
+            while len(tasks) < num_tasks:
+                # Sample attribute
+                attribute = self.rng.choice(["material", "color", "shape", "texture"])
+
+                # Sample target object that has components with this attribute
+                valid_targets = [obj for obj in self.metadata.objects
+                                 if self.metadata.has_components_with_attribute(obj, attribute)]
+                if not valid_targets:
+                    continue
+
+                target_obj = self.rng.choice(valid_targets)
+                ref_obj = self.rng.choice([obj for obj in self.metadata.objects
+                                           if obj["object_id"] != target_obj["object_id"]])
+
+                target_grid, ref_grid = self.rng.randint(0, 9, size=2)
+
+                if not self._is_valid_distance_combination(ref_grid, target_grid, distance_type):
+                    continue
+
+                combo_key = (target_obj["object_id"], ref_obj["object_id"], target_grid, ref_grid, attribute)
+                if combo_key in seen_combinations:
+                    continue
+                seen_combinations.add(combo_key)
+
+                # Generate scene
+                scene_distractor_objects = self._generate_scene_distractors(task_plan, target_obj, ref_obj)
+                scene_distractor_grids = self._get_scene_distractor_grids(task_plan, ref_grid, target_grid)
+
+                actual_num_distractors = min(len(scene_distractor_objects), len(scene_distractor_grids))
+                scene_distractor_objects = scene_distractor_objects[:actual_num_distractors]
+                scene_distractor_grids = scene_distractor_grids[:actual_num_distractors]
+
+                all_objects = [target_obj, ref_obj] + scene_distractor_objects
+                all_grids = [target_grid, ref_grid] + scene_distractor_grids
+                angles = [self.metadata.sample_angle() for _ in all_objects]
+
+                point_cloud = self._create_point_cloud_scene(all_objects, all_grids, angles)
+
+                # Get all attribute values for target object
+                components_with_attr = self.metadata.get_object_components_with_attribute(target_obj, attribute)
+                attribute_values = set()
+                for component in components_with_attr:
+                    attribute_values.add(component[attribute])
+
+                if not attribute_values:
+                    continue
+
+                # Generate QA
+                question = f"List all {attribute}s in the components of the object {distance_type} from the {ref_obj['object_name']}."
+                correct_answer = ", ".join(sorted(attribute_values))
+
+                # Generate candidate answers
+                all_values = self.metadata.get_attribute_values(attribute)
+                candidates = set()
+
+                for _ in range(min(20, task_plan.num_options * 3)):
+                    num_items = self.rng.randint(1, min(4, len(all_values)))
+                    sample_values = self.rng.choice(all_values, size=num_items, replace=False)
+                    candidate = ", ".join(sorted(sample_values))
+                    if candidate != correct_answer:
+                        candidates.add(candidate)
+
+                candidates = list(candidates)
+
+                options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+
+                task = Task(
+                    point=f"{len(tasks):06d}.npy",
+                    question=question,
+                    options=options,
+                    answer=correct_answer,
+                    answer_id=answer_id
+                )
+
+                tasks.append((task, point_cloud))
+                pbar.update(1)
+
+        return tasks
+
+
+class CountAttributeDistanceGenerator(DistanceGenerator):
+    """Generator for 'How many {attribute}s in the components of the object closest/farthest from {reference_object}?' questions."""
+
+    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
+        """Count possible task combinations."""
+        self.validate_generator_config(task_plan.generator_config)
+        distance_type = self._get_distance_type(task_plan)
+
+        valid_combinations = 0
+        for target_grid in range(9):
+            for ref_grid in range(9):
+                if self._is_valid_distance_combination(ref_grid, target_grid, distance_type):
+                    valid_combinations += 1
+
+        # Count objects that have components with attributes
+        valid_targets = 0
+        for obj in self.metadata.objects:
+            for attribute in ["material", "color", "shape", "texture"]:
+                if self.metadata.has_components_with_attribute(obj, attribute):
+                    valid_targets += 1
+                    break
+
+        return valid_combinations * valid_targets * len(self.metadata.objects) * 4  # 4 attributes
+
+    def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
+        """Generate count-attribute-distance tasks."""
+        self.validate_generator_config(task_plan.generator_config)
+        distance_type = self._get_distance_type(task_plan)
+
+        possible_tasks = self.count_possible_tasks(task_plan)
+        if num_tasks > possible_tasks:
+            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
+
+        tasks = []
+        seen_combinations = set()
+
+        with tqdm(total=num_tasks, desc=f"Generating count-attribute-{distance_type} tasks") as pbar:
+            while len(tasks) < num_tasks:
+                # Sample attribute
+                attribute = self.rng.choice(["material", "color", "shape", "texture"])
+
+                # Sample target object that has components with this attribute
+                valid_targets = [obj for obj in self.metadata.objects
+                                 if self.metadata.has_components_with_attribute(obj, attribute)]
+                if not valid_targets:
+                    continue
+
+                target_obj = self.rng.choice(valid_targets)
+                ref_obj = self.rng.choice([obj for obj in self.metadata.objects
+                                           if obj["object_id"] != target_obj["object_id"]])
+
+                target_grid, ref_grid = self.rng.randint(0, 9, size=2)
+
+                if not self._is_valid_distance_combination(ref_grid, target_grid, distance_type):
+                    continue
+
+                combo_key = (target_obj["object_id"], ref_obj["object_id"], target_grid, ref_grid, attribute)
+                if combo_key in seen_combinations:
+                    continue
+                seen_combinations.add(combo_key)
+
+                # Generate scene
+                scene_distractor_objects = self._generate_scene_distractors(task_plan, target_obj, ref_obj)
+                scene_distractor_grids = self._get_scene_distractor_grids(task_plan, ref_grid, target_grid)
+
+                actual_num_distractors = min(len(scene_distractor_objects), len(scene_distractor_grids))
+                scene_distractor_objects = scene_distractor_objects[:actual_num_distractors]
+                scene_distractor_grids = scene_distractor_grids[:actual_num_distractors]
+
+                all_objects = [target_obj, ref_obj] + scene_distractor_objects
+                all_grids = [target_grid, ref_grid] + scene_distractor_grids
+                angles = [self.metadata.sample_angle() for _ in all_objects]
+
+                point_cloud = self._create_point_cloud_scene(all_objects, all_grids, angles)
+
+                # Count unique attribute values for target object
+                components_with_attr = self.metadata.get_object_components_with_attribute(target_obj, attribute)
+                attribute_values = set()
+                for component in components_with_attr:
+                    attribute_values.add(component[attribute])
+
+                if not attribute_values:
+                    continue
+
+                # Generate QA
+                question = f"How many {attribute}s are in the components of the object {distance_type} from the {ref_obj['object_name']}?"
+                correct_count = len(attribute_values)
+                correct_answer = str(correct_count)
+
+                # Generate candidate answers
+                max_possible = len(self.metadata.get_attribute_values(attribute))
+                candidates = []
+                for i in range(1, min(max_possible + 1, 10)):
+                    if i != correct_count:
+                        candidates.append(str(i))
+
+                options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+
+                task = Task(
+                    point=f"{len(tasks):06d}.npy",
+                    question=question,
+                    options=options,
+                    answer=correct_answer,
+                    answer_id=answer_id
+                )
+
+                tasks.append((task, point_cloud))
+                pbar.update(1)
 
         return tasks
