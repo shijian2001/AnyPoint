@@ -1,3 +1,4 @@
+## attribute.py
 import numpy as np
 from typing import List, Dict, Any, Tuple, Set
 from tqdm import tqdm
@@ -16,6 +17,38 @@ class AttributeGenerator(BasePointQAGenerator):
         """Get objects that have components with the specified attribute."""
         return [obj for obj in self.metadata.objects
                 if self.metadata.has_components_with_attribute(obj, attribute)]
+
+    def _generate_scene_distractors(self, task_plan: TaskPlan, target_obj: Dict) -> List[Dict]:
+        """Generate scene distractor objects for attribute questions."""
+        if task_plan.num_scene_distractors == 0:
+            return []
+
+        used_objects = {target_obj["object_id"]}
+        available_objects = [obj for obj in self.metadata.objects
+                             if obj["object_id"] not in used_objects]
+
+        num_distractors = min(task_plan.num_scene_distractors, len(available_objects))
+        return self.rng.choice(available_objects, size=num_distractors,
+                               replace=False).tolist() if num_distractors > 0 else []
+
+    def _create_scene(self, task_plan: TaskPlan, target_obj: Dict) -> Tuple[np.ndarray, List[Dict]]:
+        """Create scene with target object and optional distractors."""
+        # Generate distractor objects
+        distractor_objects = self._generate_scene_distractors(task_plan, target_obj)
+
+        # All objects in scene
+        all_objects = [target_obj] + distractor_objects
+
+        # Generate random positions and angles for all objects
+        num_objects = len(all_objects)
+        available_grids = list(range(9))
+        selected_grids = self.rng.choice(available_grids, size=num_objects, replace=False).tolist()
+        angles = [self.metadata.sample_angle() for _ in all_objects]
+
+        # Create point cloud scene
+        point_cloud = self._create_point_cloud_scene(all_objects, selected_grids, angles)
+
+        return point_cloud, distractor_objects
 
 
 class WhatAttributeGenerator(AttributeGenerator):
@@ -49,31 +82,46 @@ class WhatAttributeGenerator(AttributeGenerator):
                 if not valid_objects:
                     continue
 
-                obj = self.rng.choice(valid_objects)
-                components_with_attr = self.metadata.get_object_components_with_attribute(obj, attribute)
+                target_obj = self.rng.choice(valid_objects)
+                components_with_attr = self.metadata.get_object_components_with_attribute(target_obj, attribute)
 
                 if not components_with_attr:
                     continue
 
                 component = self.rng.choice(components_with_attr)
 
-                combo_key = (obj["object_id"], component["name"], attribute)
+                combo_key = (target_obj["object_id"], component["name"], attribute, task_plan.num_scene_distractors)
                 if combo_key in seen_combinations:
                     continue
                 seen_combinations.add(combo_key)
 
-                # Generate scene with single object
-                grid = self.rng.randint(0, 9)
-                angle = self.metadata.sample_angle()
-                point_cloud = self._create_point_cloud_scene([obj], [grid], [angle])
+                # Generate scene
+                point_cloud, distractor_objects = self._create_scene(task_plan, target_obj)
 
                 # Generate QA
-                question = f"What is the {attribute} of the {component['name']} in the {obj['object_name']}?"
+                question = f"What is the {attribute} of the {component['name']} in the {target_obj['object_name']}?"
                 correct_answer = component[attribute]
 
-                # Generate candidate answers
-                all_values = self.metadata.get_attribute_values(attribute)
-                candidates = [v for v in all_values if v != correct_answer]
+                # Generate candidates - prioritize scene distractors
+                candidates = []
+
+                # From scene distractors
+                for distractor in distractor_objects:
+                    distractor_components = self.metadata.get_object_components_with_attribute(distractor, attribute)
+                    for comp in distractor_components:
+                        if comp[attribute] != correct_answer:
+                            candidates.append(comp[attribute])
+
+                # Remove duplicates
+                candidates = list(set(candidates))
+
+                # If not enough, supplement from global pool
+                needed = task_plan.num_options - 1
+                if len(candidates) < needed:
+                    all_values = self.metadata.get_attribute_values(attribute)
+                    additional_candidates = [v for v in all_values
+                                             if v != correct_answer and v not in candidates]
+                    candidates.extend(additional_candidates[:needed - len(candidates)])
 
                 options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
 
@@ -120,15 +168,15 @@ class ListAttributeGenerator(AttributeGenerator):
                 if not valid_objects:
                     continue
 
-                obj = self.rng.choice(valid_objects)
+                target_obj = self.rng.choice(valid_objects)
 
-                combo_key = (obj["object_id"], attribute)
+                combo_key = (target_obj["object_id"], attribute, task_plan.num_scene_distractors)
                 if combo_key in seen_combinations:
                     continue
                 seen_combinations.add(combo_key)
 
-                # Get all attribute values for this object
-                components_with_attr = self.metadata.get_object_components_with_attribute(obj, attribute)
+                # Get all attribute values for target object
+                components_with_attr = self.metadata.get_object_components_with_attribute(target_obj, attribute)
                 attribute_values = set()
                 for component in components_with_attr:
                     attribute_values.add(component[attribute])
@@ -136,28 +184,44 @@ class ListAttributeGenerator(AttributeGenerator):
                 if not attribute_values:
                     continue
 
-                # Generate scene with single object
-                grid = self.rng.randint(0, 9)
-                angle = self.metadata.sample_angle()
-                point_cloud = self._create_point_cloud_scene([obj], [grid], [angle])
+                # Generate scene
+                point_cloud, distractor_objects = self._create_scene(task_plan, target_obj)
 
                 # Generate QA
-                question = f"List all {attribute}s in the components of the {obj['object_name']}."
+                question = f"List all {attribute}s in the components of the {target_obj['object_name']}."
                 correct_answer = ", ".join(sorted(attribute_values))
 
-                # Generate candidate answers
-                all_values = self.metadata.get_attribute_values(attribute)
-                candidates = set()
+                # Generate candidates - prioritize scene distractors
+                candidates = []
 
-                # Generate some incorrect combinations
-                for _ in range(min(20, task_plan.num_options * 3)):
-                    num_items = self.rng.randint(1, min(4, len(all_values)))
-                    sample_values = self.rng.choice(all_values, size=num_items, replace=False)
-                    candidate = ", ".join(sorted(sample_values))
-                    if candidate != correct_answer:
-                        candidates.add(candidate)
+                # From scene distractors (use complete mistake strategy)
+                for distractor in distractor_objects:
+                    distractor_components = self.metadata.get_object_components_with_attribute(distractor, attribute)
+                    distractor_values = set()
+                    for comp in distractor_components:
+                        distractor_values.add(comp[attribute])
 
-                candidates = list(candidates)
+                    if distractor_values:
+                        distractor_answer = ", ".join(sorted(distractor_values))
+                        if distractor_answer != correct_answer:
+                            candidates.append(distractor_answer)
+
+                # If not enough, supplement from global pool
+                needed = task_plan.num_options - 1
+                if len(candidates) < needed:
+                    all_values = self.metadata.get_attribute_values(attribute)
+                    additional_needed = needed - len(candidates)
+
+                    for _ in range(additional_needed * 3):  # Try a few times to get enough
+                        num_items = self.rng.randint(1, min(4, len(all_values)))
+                        sample_values = self.rng.choice(all_values, size=num_items, replace=False)
+                        candidate = ", ".join(sorted(sample_values))
+
+                        if candidate != correct_answer and candidate not in candidates:
+                            candidates.append(candidate)
+
+                        if len(candidates) >= needed:
+                            break
 
                 options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
 
@@ -176,7 +240,7 @@ class ListAttributeGenerator(AttributeGenerator):
 
 
 class CountAttributeGenerator(AttributeGenerator):
-    """Generator for 'How many {attribute}s in the components of the {object}?' questions."""
+    """Generator for 'How many {attribute}s are in the components of the {object}?' questions."""
 
     def count_possible_tasks(self, task_plan: TaskPlan) -> int:
         """Count possible task combinations."""
@@ -204,15 +268,15 @@ class CountAttributeGenerator(AttributeGenerator):
                 if not valid_objects:
                     continue
 
-                obj = self.rng.choice(valid_objects)
+                target_obj = self.rng.choice(valid_objects)
 
-                combo_key = (obj["object_id"], attribute)
+                combo_key = (target_obj["object_id"], attribute, task_plan.num_scene_distractors)
                 if combo_key in seen_combinations:
                     continue
                 seen_combinations.add(combo_key)
 
-                # Count unique attribute values for this object
-                components_with_attr = self.metadata.get_object_components_with_attribute(obj, attribute)
+                # Count unique attribute values for target object
+                components_with_attr = self.metadata.get_object_components_with_attribute(target_obj, attribute)
                 attribute_values = set()
                 for component in components_with_attr:
                     attribute_values.add(component[attribute])
@@ -220,22 +284,57 @@ class CountAttributeGenerator(AttributeGenerator):
                 if not attribute_values:
                     continue
 
-                # Generate scene with single object
-                grid = self.rng.randint(0, 9)
-                angle = self.metadata.sample_angle()
-                point_cloud = self._create_point_cloud_scene([obj], [grid], [angle])
+                # Generate scene
+                point_cloud, distractor_objects = self._create_scene(task_plan, target_obj)
 
                 # Generate QA
-                question = f"How many {attribute}s are in the components of the {obj['object_name']}?"
+                question = f"How many {attribute}s are in the components of the {target_obj['object_name']}?"
                 correct_count = len(attribute_values)
                 correct_answer = str(correct_count)
 
-                # Generate candidate answers
-                max_possible = len(self.metadata.get_attribute_values(attribute))
+                # Generate candidates - prioritize scene distractors' counts
                 candidates = []
-                for i in range(1, min(max_possible + 1, 10)):
-                    if i != correct_count:
-                        candidates.append(str(i))
+
+                # From scene distractors
+                for distractor in distractor_objects:
+                    distractor_components = self.metadata.get_object_components_with_attribute(distractor, attribute)
+                    distractor_values = set()
+                    for comp in distractor_components:
+                        distractor_values.add(comp[attribute])
+
+                    distractor_count = len(distractor_values)
+                    if distractor_count != correct_count:
+                        candidates.append(str(distractor_count))
+
+                # Remove duplicates
+                candidates = list(set(candidates))
+
+                # If not enough, generate numbers around correct answer
+                needed = task_plan.num_options - 1
+                if len(candidates) < needed:
+                    additional_needed = needed - len(candidates)
+                    used_numbers = {correct_count} | {int(c) for c in candidates}
+
+                    # Generate additional_needed numbers around correct_count
+                    offset = 1
+                    while len(candidates) < needed:
+                        # Try positive offset
+                        if correct_count + offset not in used_numbers:
+                            candidates.append(str(correct_count + offset))
+                            used_numbers.add(correct_count + offset)
+
+                        if len(candidates) >= needed:
+                            break
+
+                        # Try negative offset (if >= 0)
+                        if correct_count - offset >= 0 and correct_count - offset not in used_numbers:
+                            candidates.append(str(correct_count - offset))
+                            used_numbers.add(correct_count - offset)
+
+                        if len(candidates) >= needed:
+                            break
+
+                        offset += 1
 
                 options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
 

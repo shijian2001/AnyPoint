@@ -16,6 +16,13 @@ class TaskPlan:
     seed: int = 42
     generator_config: Dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self):
+        """Validate task plan parameters."""
+        if not 2 <= self.num_options <= 6:
+            raise ValueError("num_options must be between 2 and 6")
+        if not 0 <= self.num_scene_distractors <= 7:
+            raise ValueError("num_scene_distractors must be between 0 and 7 (grid system limitation)")
+
 
 @dataclass
 class Task:
