@@ -138,7 +138,7 @@ class WhatDistanceGenerator(DistanceGenerator):
                     else:
                         random_object_names = [obj["object_name"] for obj in available_global_objects]
 
-                    candidates = scene_object_names_wo_answer + random_object_names
+                    candidates = list(set(scene_object_names_wo_answer + random_object_names))
 
                 options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
 

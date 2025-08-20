@@ -12,7 +12,7 @@ class TaskPlan:
     generator_type: str
     ## Note: options != correct answer + num_scene_distractors
     num_options: int = 4  # Number of multiple choice options (2-6)
-    num_scene_distractors: int = 2  # Number of additional objects in scene
+    num_scene_distractors: int = 2  # Number of additional objects in scene (0-7)
     seed: int = 42
     generator_config: Dict[str, Any] = field(default_factory=dict)
 
@@ -78,15 +78,14 @@ class BasePointQAGenerator(ABC):
                          num_options: int) -> Tuple[List[str], str]:
         """Compose multiple choice options and determine answer ID."""
         num_distractors = num_options - 1
-        if len(candidates) >= num_distractors:
-            distractors = self.rng.choice(candidates, size=num_distractors, replace=False).tolist()
-        else:
-            distractors = candidates.copy()
-            while len(distractors) < num_distractors:
-                distractors.extend(self.rng.choice(candidates,
-                                                   size=min(len(candidates), num_distractors - len(distractors)),
-                                                   replace=False).tolist())
-            distractors = distractors[:num_distractors]
+
+        unique_candidates = list(set(candidates))
+
+        if len(unique_candidates) < num_distractors:
+            raise ValueError(f"Not enough unique candidates: need {num_distractors}, got {len(unique_candidates)}. "
+                             f"This indicates a generator bug or insufficient metadata diversity.")
+
+        distractors = self.rng.choice(unique_candidates, size=num_distractors, replace=False).tolist()
 
         all_options = [correct_answer] + distractors
         option_labels = ['A', 'B', 'C', 'D', 'E', 'F'][:len(all_options)]
