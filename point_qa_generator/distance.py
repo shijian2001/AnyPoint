@@ -123,14 +123,23 @@ class WhatDistanceGenerator(DistanceGenerator):
                 question = f"What is the object that is {distance_type} from the {ref_obj['object_name']}?"
                 correct_answer = target_obj["object_name"]
 
-                scene_object_names = [obj["object_name"] for obj in all_objects if obj != target_obj]
-                random_object_names = [obj["object_name"] for obj in self.rng.choice(
-                    [obj for obj in self.metadata.objects if obj not in all_objects],
-                    size=min(10, len(self.metadata.objects) - len(all_objects)),
-                    replace=False
-                )] if len(self.metadata.objects) > len(all_objects) else []
+                scene_object_names_wo_answer = [obj["object_name"] for obj in all_objects if obj != target_obj]
+                num_distractors = task_plan.num_options - 1
 
-                candidates = list(dict.fromkeys(scene_object_names + random_object_names))
+                if len(scene_object_names_wo_answer) >= num_distractors:
+                    candidates = scene_object_names_wo_answer
+                else:
+                    num_needed_from_global = num_distractors - len(scene_object_names_wo_answer)
+                    available_global_objects = [obj for obj in self.metadata.objects if obj not in all_objects]
+
+                    if len(available_global_objects) >= num_needed_from_global:
+                        random_object_names = [obj["object_name"] for obj in self.rng.choice(
+                            available_global_objects, size=num_needed_from_global, replace=False)]
+                    else:
+                        random_object_names = [obj["object_name"] for obj in available_global_objects]
+
+                    candidates = scene_object_names_wo_answer + random_object_names
+
                 options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
 
                 task = Task(
