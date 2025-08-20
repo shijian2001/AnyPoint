@@ -319,16 +319,36 @@ class ListAttributeDistanceGenerator(DistanceGenerator):
                 question = f"List all {attribute}s in the components of the object {distance_type} from the {ref_obj['object_name']}."
                 correct_answer = ", ".join(sorted(attribute_values))
 
-                # Generate candidate answers
-                all_values = self.metadata.get_attribute_values(attribute)
+                # Generate candidate answers - prioritize scene objects
                 candidates = set()
 
-                for _ in range(min(20, task_plan.num_options * 3)):
-                    num_items = self.rng.randint(1, min(4, len(all_values)))
-                    sample_values = self.rng.choice(all_values, size=num_items, replace=False)
-                    candidate = ", ".join(sorted(sample_values))
-                    if candidate != correct_answer:
-                        candidates.add(candidate)
+                # From scene objects excluding target
+                scene_objects_wo_answer = [obj for obj in all_objects if obj != target_obj]
+                for obj in scene_objects_wo_answer:
+                    obj_components = self.metadata.get_object_components_with_attribute(obj, attribute)
+                    obj_values = set()
+                    for comp in obj_components:
+                        obj_values.add(comp[attribute])
+
+                    if obj_values:
+                        obj_answer = ", ".join(sorted(obj_values))
+                        if obj_answer != correct_answer:
+                            candidates.add(obj_answer)
+
+                # If not enough, supplement from global pool
+                needed = task_plan.num_options - 1
+                if len(candidates) < needed:
+                    all_values = self.metadata.get_attribute_values(attribute)
+
+                    for _ in range(min(20, task_plan.num_options * 3)):
+                        num_items = self.rng.randint(1, min(4, len(all_values)))
+                        sample_values = self.rng.choice(all_values, size=num_items, replace=False)
+                        candidate = ", ".join(sorted(sample_values))
+                        if candidate != correct_answer:
+                            candidates.add(candidate)
+
+                        if len(candidates) >= needed:
+                            break
 
                 candidates = list(candidates)
 
@@ -437,12 +457,47 @@ class CountAttributeDistanceGenerator(DistanceGenerator):
                 correct_count = len(attribute_values)
                 correct_answer = str(correct_count)
 
-                # Generate candidate answers
-                max_possible = len(self.metadata.get_attribute_values(attribute))
-                candidates = []
-                for i in range(1, min(max_possible + 1, 10)):
-                    if i != correct_count:
-                        candidates.append(str(i))
+                # Generate candidates - prioritize scene objects' counts
+                candidates = set()
+
+                # From scene objects excluding target
+                scene_objects_wo_answer = [obj for obj in all_objects if obj != target_obj]
+                for obj in scene_objects_wo_answer:
+                    obj_components = self.metadata.get_object_components_with_attribute(obj, attribute)
+                    obj_values = set()
+                    for comp in obj_components:
+                        obj_values.add(comp[attribute])
+
+                    obj_count = len(obj_values)
+                    if obj_count != correct_count:
+                        candidates.add(str(obj_count))
+
+                # If not enough, generate numbers around correct answer
+                needed = task_plan.num_options - 1
+                if len(candidates) < needed:
+                    used_numbers = {correct_count} | {int(c) for c in candidates}
+
+                    offset = 1
+                    while len(candidates) < needed:
+                        # Try positive offset
+                        if correct_count + offset not in used_numbers:
+                            candidates.add(str(correct_count + offset))
+                            used_numbers.add(correct_count + offset)
+
+                        if len(candidates) >= needed:
+                            break
+
+                        # Try negative offset (if >= 0)
+                        if correct_count - offset >= 0 and correct_count - offset not in used_numbers:
+                            candidates.add(str(correct_count - offset))
+                            used_numbers.add(correct_count - offset)
+
+                        if len(candidates) >= needed:
+                            break
+
+                        offset += 1
+
+                candidates = list(candidates)
 
                 options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
 

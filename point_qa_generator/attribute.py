@@ -1,4 +1,3 @@
-## attribute.py
 import numpy as np
 from typing import List, Dict, Any, Tuple, Set
 from tqdm import tqdm
@@ -103,25 +102,26 @@ class WhatAttributeGenerator(AttributeGenerator):
                 correct_answer = component[attribute]
 
                 # Generate candidates - prioritize scene distractors
-                candidates = []
+                candidates = set()
 
                 # From scene distractors
                 for distractor in distractor_objects:
                     distractor_components = self.metadata.get_object_components_with_attribute(distractor, attribute)
                     for comp in distractor_components:
                         if comp[attribute] != correct_answer:
-                            candidates.append(comp[attribute])
-
-                # Remove duplicates
-                candidates = list(set(candidates))
+                            candidates.add(comp[attribute])
 
                 # If not enough, supplement from global pool
                 needed = task_plan.num_options - 1
                 if len(candidates) < needed:
                     all_values = self.metadata.get_attribute_values(attribute)
-                    additional_candidates = [v for v in all_values
-                                             if v != correct_answer and v not in candidates]
-                    candidates.extend(additional_candidates[:needed - len(candidates)])
+                    for v in all_values:
+                        if v != correct_answer and v not in candidates:
+                            candidates.add(v)
+                            if len(candidates) >= needed:
+                                break
+
+                candidates = list(candidates)
 
                 options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
 
@@ -192,7 +192,7 @@ class ListAttributeGenerator(AttributeGenerator):
                 correct_answer = ", ".join(sorted(attribute_values))
 
                 # Generate candidates - prioritize scene distractors
-                candidates = []
+                candidates = set()
 
                 # From scene distractors (use complete mistake strategy)
                 for distractor in distractor_objects:
@@ -204,24 +204,25 @@ class ListAttributeGenerator(AttributeGenerator):
                     if distractor_values:
                         distractor_answer = ", ".join(sorted(distractor_values))
                         if distractor_answer != correct_answer:
-                            candidates.append(distractor_answer)
+                            candidates.add(distractor_answer)
 
                 # If not enough, supplement from global pool
                 needed = task_plan.num_options - 1
                 if len(candidates) < needed:
                     all_values = self.metadata.get_attribute_values(attribute)
-                    additional_needed = needed - len(candidates)
 
-                    for _ in range(additional_needed * 3):  # Try a few times to get enough
+                    for _ in range((needed - len(candidates)) * 3):
                         num_items = self.rng.randint(1, min(4, len(all_values)))
                         sample_values = self.rng.choice(all_values, size=num_items, replace=False)
                         candidate = ", ".join(sorted(sample_values))
 
-                        if candidate != correct_answer and candidate not in candidates:
-                            candidates.append(candidate)
+                        if candidate != correct_answer:
+                            candidates.add(candidate)
 
                         if len(candidates) >= needed:
                             break
+
+                candidates = list(candidates)
 
                 options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
 
@@ -293,7 +294,7 @@ class CountAttributeGenerator(AttributeGenerator):
                 correct_answer = str(correct_count)
 
                 # Generate candidates - prioritize scene distractors' counts
-                candidates = []
+                candidates = set()
 
                 # From scene distractors
                 for distractor in distractor_objects:
@@ -304,23 +305,18 @@ class CountAttributeGenerator(AttributeGenerator):
 
                     distractor_count = len(distractor_values)
                     if distractor_count != correct_count:
-                        candidates.append(str(distractor_count))
-
-                # Remove duplicates
-                candidates = list(set(candidates))
+                        candidates.add(str(distractor_count))
 
                 # If not enough, generate numbers around correct answer
                 needed = task_plan.num_options - 1
                 if len(candidates) < needed:
-                    additional_needed = needed - len(candidates)
                     used_numbers = {correct_count} | {int(c) for c in candidates}
 
-                    # Generate additional_needed numbers around correct_count
                     offset = 1
                     while len(candidates) < needed:
                         # Try positive offset
                         if correct_count + offset not in used_numbers:
-                            candidates.append(str(correct_count + offset))
+                            candidates.add(str(correct_count + offset))
                             used_numbers.add(correct_count + offset)
 
                         if len(candidates) >= needed:
@@ -328,13 +324,15 @@ class CountAttributeGenerator(AttributeGenerator):
 
                         # Try negative offset (if >= 0)
                         if correct_count - offset >= 0 and correct_count - offset not in used_numbers:
-                            candidates.append(str(correct_count - offset))
+                            candidates.add(str(correct_count - offset))
                             used_numbers.add(correct_count - offset)
 
                         if len(candidates) >= needed:
                             break
 
                         offset += 1
+
+                candidates = list(candidates)
 
                 options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
 
