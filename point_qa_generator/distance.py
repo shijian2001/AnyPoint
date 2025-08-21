@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Tuple, Set
 from tqdm import tqdm
 from .base import BasePointQAGenerator, TaskPlan, Task
 from .utils import (get_relative_distance_level, get_max_distance_level,
-                    get_farther_grids, get_closer_grids, GRID_POSITIONS)
+                    get_farther_grids, get_closer_grids, GRID_POSITIONS, ATTRIBUTES)
 
 
 class DistanceGenerator(BasePointQAGenerator):
@@ -197,7 +197,6 @@ class WhereDistanceGenerator(DistanceGenerator):
                     continue
                 seen_combinations.add(combo_key)
 
-                # Generate scene
                 scene_distractor_objects = self._generate_scene_distractors(task_plan, target_obj, ref_obj)
                 scene_distractor_grids = self._get_scene_distractor_grids(task_plan, ref_grid, target_grid)
 
@@ -248,7 +247,7 @@ class ListAttributeDistanceGenerator(DistanceGenerator):
         # Count objects that have components with attributes
         valid_targets = 0
         for obj in self.metadata.objects:
-            for attribute in ["material", "color", "shape", "texture"]:
+            for attribute in ATTRIBUTES:
                 if self.metadata.has_components_with_attribute(obj, attribute):
                     valid_targets += 1
                     break
@@ -270,7 +269,7 @@ class ListAttributeDistanceGenerator(DistanceGenerator):
         with tqdm(total=num_tasks, desc=f"Generating list-attribute-{distance_type} tasks") as pbar:
             while len(tasks) < num_tasks:
                 # Sample attribute
-                attribute = self.rng.choice(["material", "color", "shape", "texture"])
+                attribute = self.rng.choice(ATTRIBUTES)
 
                 # Sample target object that has components with this attribute
                 valid_targets = [obj for obj in self.metadata.objects
@@ -306,7 +305,6 @@ class ListAttributeDistanceGenerator(DistanceGenerator):
 
                 point_cloud = self._create_point_cloud_scene(all_objects, all_grids, angles)
 
-                # Get all attribute values for target object
                 components_with_attr = self.metadata.get_object_components_with_attribute(target_obj, attribute)
                 attribute_values = set()
                 for component in components_with_attr:
@@ -315,7 +313,6 @@ class ListAttributeDistanceGenerator(DistanceGenerator):
                 if not attribute_values:
                     continue
 
-                # Generate QA
                 question = f"List all {attribute}s in the components of the object {distance_type} from the {ref_obj['object_name']}."
                 correct_answer = ", ".join(sorted(attribute_values))
 
@@ -339,12 +336,18 @@ class ListAttributeDistanceGenerator(DistanceGenerator):
                 needed = task_plan.num_options - 1
                 if len(candidates) < needed:
                     all_values = self.metadata.get_attribute_values(attribute)
-
+                    correct_values_set = set(correct_answer.split(", "))
+                    
                     for _ in range(min(20, task_plan.num_options * 3)):
-                        num_items = self.rng.randint(1, min(4, len(all_values)))
+                        num_items = len(correct_values_set)
+                        if num_items > len(all_values):
+                            continue
+                            
                         sample_values = self.rng.choice(all_values, size=num_items, replace=False)
-                        candidate = ", ".join(sorted(sample_values))
-                        if candidate != correct_answer:
+                        candidate_values_set = set(sample_values)
+                        
+                        if candidate_values_set != correct_values_set:
+                            candidate = ", ".join(sorted(sample_values))
                             candidates.add(candidate)
 
                         if len(candidates) >= needed:
@@ -385,7 +388,7 @@ class CountAttributeDistanceGenerator(DistanceGenerator):
         # Count objects that have components with attributes
         valid_targets = 0
         for obj in self.metadata.objects:
-            for attribute in ["material", "color", "shape", "texture"]:
+            for attribute in ATTRIBUTES:
                 if self.metadata.has_components_with_attribute(obj, attribute):
                     valid_targets += 1
                     break
@@ -406,10 +409,8 @@ class CountAttributeDistanceGenerator(DistanceGenerator):
 
         with tqdm(total=num_tasks, desc=f"Generating count-attribute-{distance_type} tasks") as pbar:
             while len(tasks) < num_tasks:
-                # Sample attribute
-                attribute = self.rng.choice(["material", "color", "shape", "texture"])
+                attribute = self.rng.choice(ATTRIBUTES)
 
-                # Sample target object that has components with this attribute
                 valid_targets = [obj for obj in self.metadata.objects
                                  if self.metadata.has_components_with_attribute(obj, attribute)]
                 if not valid_targets:
@@ -429,7 +430,6 @@ class CountAttributeDistanceGenerator(DistanceGenerator):
                     continue
                 seen_combinations.add(combo_key)
 
-                # Generate scene
                 scene_distractor_objects = self._generate_scene_distractors(task_plan, target_obj, ref_obj)
                 scene_distractor_grids = self._get_scene_distractor_grids(task_plan, ref_grid, target_grid)
 
@@ -452,15 +452,12 @@ class CountAttributeDistanceGenerator(DistanceGenerator):
                 if not attribute_values:
                     continue
 
-                # Generate QA
                 question = f"How many {attribute}s are in the components of the object {distance_type} from the {ref_obj['object_name']}?"
                 correct_count = len(attribute_values)
                 correct_answer = str(correct_count)
 
-                # Generate candidates - prioritize scene objects' counts
                 candidates = set()
 
-                # From scene objects excluding target
                 scene_objects_wo_answer = [obj for obj in all_objects if obj != target_obj]
                 for obj in scene_objects_wo_answer:
                     obj_components = self.metadata.get_object_components_with_attribute(obj, attribute)
@@ -472,14 +469,12 @@ class CountAttributeDistanceGenerator(DistanceGenerator):
                     if obj_count != correct_count:
                         candidates.add(str(obj_count))
 
-                # If not enough, generate numbers around correct answer
                 needed = task_plan.num_options - 1
                 if len(candidates) < needed:
                     used_numbers = {correct_count} | {int(c) for c in candidates}
 
                     offset = 1
                     while len(candidates) < needed:
-                        # Try positive offset
                         if correct_count + offset not in used_numbers:
                             candidates.add(str(correct_count + offset))
                             used_numbers.add(correct_count + offset)
@@ -487,7 +482,6 @@ class CountAttributeDistanceGenerator(DistanceGenerator):
                         if len(candidates) >= needed:
                             break
 
-                        # Try negative offset (if >= 0)
                         if correct_count - offset >= 0 and correct_count - offset not in used_numbers:
                             candidates.add(str(correct_count - offset))
                             used_numbers.add(correct_count - offset)

@@ -8,6 +8,10 @@ from .distance import (WhatDistanceGenerator, WhereDistanceGenerator,
                        ListAttributeDistanceGenerator, CountAttributeDistanceGenerator)
 from .attribute import (WhatAttributeGenerator, ListAttributeGenerator,
                         CountAttributeGenerator)
+from .number import (CountObjectGenerator, FrequentObjectGenerator,
+                     ListAttributeFrequentGenerator, CountAttributeFrequentGenerator)
+from .size import (WhatSizeGenerator, ListAttributeSizeGenerator,
+                   CountAttributeSizeGenerator, WhereSizeGenerator)
 
 
 class PointQAGenerator:
@@ -33,7 +37,19 @@ class PointQAGenerator:
             # Attribute-based generators
             "what_attribute": WhatAttributeGenerator(self.metadata, seed),
             "list_attribute": ListAttributeGenerator(self.metadata, seed),
-            "count_attribute": CountAttributeGenerator(self.metadata, seed)
+            "count_attribute": CountAttributeGenerator(self.metadata, seed),
+
+            # Number-based generators
+            "count_object": CountObjectGenerator(self.metadata, seed),
+            "frequent_object": FrequentObjectGenerator(self.metadata, seed),
+            "list_attribute_frequent": ListAttributeFrequentGenerator(self.metadata, seed),
+            "count_attribute_frequent": CountAttributeFrequentGenerator(self.metadata, seed),
+
+            # Size-based generators
+            "what_size": WhatSizeGenerator(self.metadata, seed),
+            "list_attribute_size": ListAttributeSizeGenerator(self.metadata, seed),
+            "count_attribute_size": CountAttributeSizeGenerator(self.metadata, seed),
+            "where_size": WhereSizeGenerator(self.metadata, seed)
         }
 
     def generate(self, task_plan: TaskPlan, num_tasks: int, output_dir: str) -> Dict[str, any]:
@@ -61,7 +77,6 @@ class PointQAGenerator:
         pcd_dir = os.path.join(output_dir, "pcd")
         os.makedirs(pcd_dir, exist_ok=True)
 
-        # Generate tasks
         task_results = generator.generate_tasks(task_plan, num_tasks)
 
         task_records = []

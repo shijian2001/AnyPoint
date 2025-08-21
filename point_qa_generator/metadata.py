@@ -71,7 +71,6 @@ class PointCloudMetadata:
             "texture": sorted(list(textures))
         }
 
-        # Save to file
         os.makedirs(os.path.dirname(self.attributes_file), exist_ok=True)
         with open(self.attributes_file, 'w', encoding='utf-8') as f:
             json.dump(self.attributes, f, indent=2, ensure_ascii=False)

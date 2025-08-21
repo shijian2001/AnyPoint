@@ -2,3 +2,5 @@ numpy
 open3d
 trimesh
 tqdm
+matplotlib
+scikit-learn

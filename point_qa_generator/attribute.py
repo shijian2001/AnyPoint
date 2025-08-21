@@ -2,6 +2,7 @@ import numpy as np
 from typing import List, Dict, Any, Tuple, Set
 from tqdm import tqdm
 from .base import BasePointQAGenerator, TaskPlan, Task
+from .utils import ATTRIBUTES
 
 
 class AttributeGenerator(BasePointQAGenerator):
@@ -32,19 +33,15 @@ class AttributeGenerator(BasePointQAGenerator):
 
     def _create_scene(self, task_plan: TaskPlan, target_obj: Dict) -> Tuple[np.ndarray, List[Dict]]:
         """Create scene with target object and optional distractors."""
-        # Generate distractor objects
         distractor_objects = self._generate_scene_distractors(task_plan, target_obj)
 
-        # All objects in scene
         all_objects = [target_obj] + distractor_objects
 
-        # Generate random positions and angles for all objects
         num_objects = len(all_objects)
         available_grids = list(range(9))
         selected_grids = self.rng.choice(available_grids, size=num_objects, replace=False).tolist()
         angles = [self.metadata.sample_angle() for _ in all_objects]
 
-        # Create point cloud scene
         point_cloud = self._create_point_cloud_scene(all_objects, selected_grids, angles)
 
         return point_cloud, distractor_objects
@@ -56,7 +53,7 @@ class WhatAttributeGenerator(AttributeGenerator):
     def count_possible_tasks(self, task_plan: TaskPlan) -> int:
         """Count possible task combinations."""
         count = 0
-        for attribute in ["material", "color", "shape", "texture"]:
+        for attribute in ATTRIBUTES:
             valid_objects = self._get_valid_objects_for_attribute(attribute)
             for obj in valid_objects:
                 components_with_attr = self.metadata.get_object_components_with_attribute(obj, attribute)
@@ -74,8 +71,7 @@ class WhatAttributeGenerator(AttributeGenerator):
 
         with tqdm(total=num_tasks, desc="Generating what-attribute tasks") as pbar:
             while len(tasks) < num_tasks:
-                # Sample attribute and object
-                attribute = self.rng.choice(["material", "color", "shape", "texture"])
+                attribute = self.rng.choice(ATTRIBUTES)
                 valid_objects = self._get_valid_objects_for_attribute(attribute)
 
                 if not valid_objects:
@@ -94,10 +90,8 @@ class WhatAttributeGenerator(AttributeGenerator):
                     continue
                 seen_combinations.add(combo_key)
 
-                # Generate scene
                 point_cloud, distractor_objects = self._create_scene(task_plan, target_obj)
 
-                # Generate QA
                 question = f"What is the {attribute} of the {component['name']} in the {target_obj['object_name']}?"
                 correct_answer = component[attribute]
 
@@ -145,7 +139,7 @@ class ListAttributeGenerator(AttributeGenerator):
     def count_possible_tasks(self, task_plan: TaskPlan) -> int:
         """Count possible task combinations."""
         count = 0
-        for attribute in ["material", "color", "shape", "texture"]:
+        for attribute in ATTRIBUTES:
             valid_objects = self._get_valid_objects_for_attribute(attribute)
             count += len(valid_objects)
         return count
@@ -161,8 +155,7 @@ class ListAttributeGenerator(AttributeGenerator):
 
         with tqdm(total=num_tasks, desc="Generating list-attribute tasks") as pbar:
             while len(tasks) < num_tasks:
-                # Sample attribute and object
-                attribute = self.rng.choice(["material", "color", "shape", "texture"])
+                attribute = self.rng.choice(ATTRIBUTES)
                 valid_objects = self._get_valid_objects_for_attribute(attribute)
 
                 if not valid_objects:
@@ -175,7 +168,6 @@ class ListAttributeGenerator(AttributeGenerator):
                     continue
                 seen_combinations.add(combo_key)
 
-                # Get all attribute values for target object
                 components_with_attr = self.metadata.get_object_components_with_attribute(target_obj, attribute)
                 attribute_values = set()
                 for component in components_with_attr:
@@ -184,14 +176,11 @@ class ListAttributeGenerator(AttributeGenerator):
                 if not attribute_values:
                     continue
 
-                # Generate scene
                 point_cloud, distractor_objects = self._create_scene(task_plan, target_obj)
 
-                # Generate QA
                 question = f"List all {attribute}s in the components of the {target_obj['object_name']}."
                 correct_answer = ", ".join(sorted(attribute_values))
 
-                # Generate candidates - prioritize scene distractors
                 candidates = set()
 
                 # From scene distractors (use complete mistake strategy)
@@ -210,13 +199,20 @@ class ListAttributeGenerator(AttributeGenerator):
                 needed = task_plan.num_options - 1
                 if len(candidates) < needed:
                     all_values = self.metadata.get_attribute_values(attribute)
-
+                    correct_values_set = set(correct_answer.split(", "))
+                    
                     for _ in range((needed - len(candidates)) * 3):
-                        num_items = self.rng.randint(1, min(4, len(all_values)))
+                        # Use same number of attributes as correct answer
+                        num_items = len(correct_values_set)
+                        if num_items > len(all_values):
+                            continue
+                            
                         sample_values = self.rng.choice(all_values, size=num_items, replace=False)
-                        candidate = ", ".join(sorted(sample_values))
-
-                        if candidate != correct_answer:
+                        candidate_values_set = set(sample_values)
+                        
+                        # Ensure candidate is semantically different from correct answer
+                        if candidate_values_set != correct_values_set:
+                            candidate = ", ".join(sorted(sample_values))
                             candidates.add(candidate)
 
                         if len(candidates) >= needed:
@@ -246,7 +242,7 @@ class CountAttributeGenerator(AttributeGenerator):
     def count_possible_tasks(self, task_plan: TaskPlan) -> int:
         """Count possible task combinations."""
         count = 0
-        for attribute in ["material", "color", "shape", "texture"]:
+        for attribute in ATTRIBUTES:
             valid_objects = self._get_valid_objects_for_attribute(attribute)
             count += len(valid_objects)
         return count
@@ -262,8 +258,7 @@ class CountAttributeGenerator(AttributeGenerator):
 
         with tqdm(total=num_tasks, desc="Generating count-attribute tasks") as pbar:
             while len(tasks) < num_tasks:
-                # Sample attribute and object
-                attribute = self.rng.choice(["material", "color", "shape", "texture"])
+                attribute = self.rng.choice(ATTRIBUTES)
                 valid_objects = self._get_valid_objects_for_attribute(attribute)
 
                 if not valid_objects:
@@ -276,7 +271,6 @@ class CountAttributeGenerator(AttributeGenerator):
                     continue
                 seen_combinations.add(combo_key)
 
-                # Count unique attribute values for target object
                 components_with_attr = self.metadata.get_object_components_with_attribute(target_obj, attribute)
                 attribute_values = set()
                 for component in components_with_attr:
@@ -285,10 +279,8 @@ class CountAttributeGenerator(AttributeGenerator):
                 if not attribute_values:
                     continue
 
-                # Generate scene
                 point_cloud, distractor_objects = self._create_scene(task_plan, target_obj)
 
-                # Generate QA
                 question = f"How many {attribute}s are in the components of the {target_obj['object_name']}?"
                 correct_count = len(attribute_values)
                 correct_answer = str(correct_count)

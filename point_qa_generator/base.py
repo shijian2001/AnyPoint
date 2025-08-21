@@ -20,8 +20,17 @@ class TaskPlan:
         """Validate task plan parameters."""
         if not 2 <= self.num_options <= 6:
             raise ValueError("num_options must be between 2 and 6")
-        if not 0 <= self.num_scene_distractors <= 7:
-            raise ValueError("num_scene_distractors must be between 0 and 7 (grid system limitation)")
+        
+        is_number_generator = self.generator_type.startswith((
+            'count_object', 'frequent_object', 'list_attribute_frequent', 'count_attribute_frequent'
+        ))
+        
+        if is_number_generator:
+            print(f"WARNING: num_scene_distractors={self.num_scene_distractors} is ignored for {self.generator_type}. "
+                  f"Number generators use internal random object count logic.")
+        else:
+            if not 0 <= self.num_scene_distractors <= 7:
+                raise ValueError("num_scene_distractors must be between 0 and 7 (grid system limitation)")
 
 
 @dataclass
@@ -57,14 +66,16 @@ class BasePointQAGenerator(ABC):
         pass
 
     def _create_point_cloud_scene(self, objects: List[Dict], grids: List[int],
-                                  angles: List[float]) -> np.ndarray:
+                                  angles: List[float], scale_factors: List[float] = None) -> np.ndarray:
         """Create combined point cloud scene from multiple objects."""
         point_clouds = []
 
-        ## TODO: more complex design
-        scale_factor = 0.5
+        default_scale_factor = 0.5
 
-        for obj, grid, angle in zip(objects, grids, angles):
+        if scale_factors is None:
+            scale_factors = [default_scale_factor] * len(objects)
+
+        for obj, grid, angle, scale_factor in zip(objects, grids, angles, scale_factors):
             pcd = self.metadata.load_point_cloud(obj["object_id"])
             pcd = rotate_x_axis(pcd, angle)
             pcd = center_and_scale_point_cloud(pcd, scale_factor)
