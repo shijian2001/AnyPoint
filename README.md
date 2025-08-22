@@ -1,6 +1,6 @@
 # AnyPoint: Programmatically Scaling Point Cloud Instruction Data Generation
 
-A fast, scalable data engine for programmatically synthesizing instruction datasets with guaranteed ground truth and diverse 3D point cloud scenes
+A fast, scalable data engine for programmatically synthesizing 3D point cloud instruction datasets with guaranteed ground truth and diverse point cloud scenes
 ## Installation
 
 ```bash
