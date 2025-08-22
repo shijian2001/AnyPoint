@@ -1,7 +1,6 @@
-# AnyPoint: Programmatically Scaling Point Cloud Question-Answer Generation
+# AnyPoint: Programmatically Scaling Point Cloud Instruction Data Generation
 
-A Python library for programmatically generating question-answer pairs from 3D point cloud scenes with rich object metadata.
-
+A fast, scalable data engine for programmatically synthesizing instruction datasets with guaranteed ground truth and diverse 3D point cloud scenes
 ## Installation
 
 ```bash
