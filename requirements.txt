@@ -4,3 +4,6 @@ trimesh
 tqdm
 matplotlib
 scikit-learn
+openai
+pyyaml
+qwen_vl_utils
