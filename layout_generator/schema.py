@@ -58,14 +58,14 @@ class LayoutObject:
     name: str
     position: Tuple[float, float, float]  # (x, y, z) coordinates
     rotation: float  # Rotation angle in degrees
-    size: float  # Scale factor (1.0 = unit sphere)
+    size: Tuple[float, float, float]  # AABB half-extents (x, y, z)
 
     def to_dict(self) -> dict:
         return {
             "name": self.name,
             "position": list(self.position),
             "rotation": self.rotation,
-            "size": self.size
+            "size": list(self.size)
         }
 
 

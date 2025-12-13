@@ -23,7 +23,7 @@ class LayoutVisualizationConfig(VisualizationConfig):
     """
     show_bounding_boxes: bool = False
     show_labels: bool = True
-    show_ground_plane: bool = True
+    show_ground_plane: bool = False
     ground_plane_size: float = 12.0
     object_colors: List[Tuple[float, float, float]] = field(default_factory=lambda: [
         (0.8, 0.3, 0.3),   # Red
@@ -121,19 +121,36 @@ class LayoutVisualizer:
         return points
     
     def _normalize_point_cloud(self, points: np.ndarray) -> np.ndarray:
-        """Normalize point cloud to unit sphere centered at origin."""
-        # Center at origin
-        center = points.mean(axis=0)
-        points = points - center
+        """Normalize point cloud to unit AABB centered at origin.
         
-        # Scale to fit in unit sphere
-        max_dist = np.linalg.norm(points, axis=1).max()
-        if max_dist > 0:
-            points = points / max_dist * 0.5  # radius = 0.5
+        The normalized AABB has half-extents of (0.5, 0.5, 0.5),
+        meaning it ranges from -0.5 to 0.5 in each dimension.
+        
+        Important: The min/max bounds of the point cloud will be EXACTLY at
+        [-0.5, 0.5] in each dimension, ensuring proper contact for "on" relations.
+        """
+        # Get actual AABB bounds
+        min_coords = points.min(axis=0)
+        max_coords = points.max(axis=0)
+        ranges = max_coords - min_coords
+        
+        # Compute center of AABB (not mean of points!)
+        aabb_center = (max_coords + min_coords) / 2
+        
+        # Center at origin
+        points = points - aabb_center
+        
+        # Scale each dimension independently so that
+        # min -> -0.5 and max -> 0.5 (EXACTLY)
+        if np.any(ranges > 0):
+            points = points / ranges  # Now points are in [-0.5, 0.5] exactly
+            # Old: Uniform scaling to preserve aspect ratio
+            # max_extent = np.abs(points).max(axis=0)
+            # points = points / (max_extent.max() * 2)
         
         return points
     
-    def load_layout(self, layout: dict) -> 'LayoutVisualizer':
+    def load_layout(self, layout: dict, object_mapping: Optional[Dict[str, str]] = None) -> 'LayoutVisualizer':
         """Load a layout specification.
         
         Args:
@@ -145,6 +162,10 @@ class LayoutVisualizer:
                         ...
                     ]
                 }
+            object_mapping: Optional dict mapping obj_X -> actual object name
+                e.g., {"obj_0": "table", "obj_1": "chair"}
+                If provided, will try to load and sample point clouds.
+                If None, uses default sphere.
                 
         Returns:
             Self for method chaining
@@ -157,14 +178,26 @@ class LayoutVisualizer:
             obj_name = obj_spec["name"]
             position = np.array(obj_spec["position"])
             rotation = obj_spec.get("rotation", 0)
-            size = obj_spec.get("size", 1.0)
+            size = obj_spec.get("size", [1.0, 1.0, 1.0])
             
-            # Try to load object template, use placeholder if not found
-            try:
-                template = self.load_object_template(obj_name)
-            except ValueError:
-                # Use default sphere as placeholder
-                template = self._create_placeholder_sphere()
+            # Convert size to numpy array (handle both old scalar and new tuple format)
+            if isinstance(size, (int, float)):
+                # Legacy support: scalar size means uniform scaling
+                size = np.array([size, size, size])
+            else:
+                size = np.array(size)
+            
+            # Load template: use object mapping if provided, else use cube
+            if object_mapping and obj_name in object_mapping:
+                actual_name = object_mapping[obj_name]
+                try:
+                    template = self._load_and_sample_object(actual_name, n_samples=8192)
+                except (ValueError, FileNotFoundError):
+                    # Fallback to cube if object file not found
+                    template = self._create_placeholder_cube()
+            else:
+                # No mapping: use default cube
+                template = self._create_placeholder_cube()
             
             # Transform object
             transformed = self._transform_object(template, position, rotation, size)
@@ -184,39 +217,67 @@ class LayoutVisualizer:
         
         return self
     
-    def _create_placeholder_sphere(self, n_points: int = 500) -> np.ndarray:
-        """Create a placeholder sphere point cloud."""
-        # Generate points on unit sphere
-        phi = np.random.uniform(0, 2 * np.pi, n_points)
-        costheta = np.random.uniform(-1, 1, n_points)
-        theta = np.arccos(costheta)
+    def _create_placeholder_cube(self, n_points: int = 8192) -> np.ndarray:
+        """Create a placeholder cube point cloud with uniform sampling.
         
-        x = np.sin(theta) * np.cos(phi)
-        y = np.sin(theta) * np.sin(phi)
-        z = np.cos(theta)
+        Returns points uniformly distributed in a unit cube [-0.5, 0.5]^3.
+        """
+        # Generate random points uniformly in unit cube
+        points = np.random.uniform(-0.5, 0.5, (n_points, 3))
+        return points
+    
+    def _load_and_sample_object(self, name: str, n_samples: int = 8192) -> np.ndarray:
+        """Load an object point cloud and randomly sample to n_samples points.
         
-        return np.column_stack([x, y, z]) * 0.5
+        Args:
+            name: Object name (e.g., "table", "chair")
+            n_samples: Target number of points (default: 8192)
+            
+        Returns:
+            Sampled and normalized point cloud (n_samples, 3)
+        """
+        # Load raw point cloud
+        raw_points = self.load_object_template(name)
+        
+        # Handle both (N, 3) and (N, 6) formats
+        if raw_points.shape[1] == 6:
+            # Take only XYZ coordinates
+            raw_points = raw_points[:, :3]
+        
+        n_raw = len(raw_points)
+        
+        if n_raw >= n_samples:
+            # Downsample: random sampling without replacement
+            indices = np.random.choice(n_raw, size=n_samples, replace=False)
+            sampled = raw_points[indices]
+        else:
+            # Upsample: random sampling with replacement
+            indices = np.random.choice(n_raw, size=n_samples, replace=True)
+            sampled = raw_points[indices]
+        
+        return sampled
     
     def _transform_object(
         self,
         points: np.ndarray,
         position: np.ndarray,
         rotation: float,
-        size: float
+        size: np.ndarray
     ) -> np.ndarray:
         """Transform object points according to layout specification.
         
         Args:
-            points: Original point cloud (N, 3)
-            position: Target position (x, y, z)
+            points: Original point cloud (N, 3) - normalized to unit AABB
+            position: Target position (x, y, z) - center of AABB
             rotation: Rotation angle in degrees (around Y axis)
-            size: Scale factor
+            size: AABB half-extents (x, y, z)
             
         Returns:
             Transformed point cloud
         """
-        # Scale
-        transformed = points * size
+        # Scale - apply different scale to each dimension
+        # Points are in [-0.5, 0.5]^3, so multiply by 2*half_extents to get full AABB
+        transformed = points * (size * 2)
         
         # Rotate around Y axis
         angle_rad = np.radians(rotation)

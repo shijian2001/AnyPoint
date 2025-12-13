@@ -1,4 +1,4 @@
-numpy
+numpy<2
 open3d
 trimesh
 tqdm
@@ -6,4 +6,6 @@ matplotlib
 scikit-learn
 openai
 pyyaml
+torch
+torchvision
 qwen_vl_utils

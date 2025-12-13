@@ -27,9 +27,9 @@ async def generate(api_keys: list, num_layouts: int, model: str):
     generator = LayoutGenerator(
         model_name=model,
         api_keys=api_keys,
-        max_concurrent_per_key=100,
-        max_retries=5,
-        solver_threads=8,
+        max_concurrent_per_key=10,
+        max_retries=10,
+        solver_threads=16,
         seed=42
     )
     
@@ -51,10 +51,10 @@ async def generate(api_keys: list, num_layouts: int, model: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate 3D scene layouts")
-    parser.add_argument("--num-layouts", type=int, default=1000, help="Number of layouts")
+    parser.add_argument("--num-layouts", type=int, default=10, help="Number of layouts")
     parser.add_argument("--output", type=str, default="data/layout/outputs", help="Output directory")
     parser.add_argument("--keys-file", type=str, required=True, help="YAML file with API keys")
-    parser.add_argument("--model", type=str, default="qwen2.5-72b-instruct", help="LLM model")
+    parser.add_argument("--model", type=str, default="DeepSeek-V3", help="LLM model")
     args = parser.parse_args()
     
     api_keys = yaml.safe_load(open(args.keys_file))["keys"]

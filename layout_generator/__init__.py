@@ -19,7 +19,6 @@ from .schema import DSL, ObjectSpec, RelationSpec, Layout, LayoutObject, Templat
 from .validator import (
     parse_dsl,
     validate_dsl_dict,
-    extract_json_from_response,
     DSLValidationError
 )
 from .solver import LayoutSolver, SolverError, solve_dsl
@@ -37,7 +36,6 @@ __all__ = [
     # Validation
     "parse_dsl",
     "validate_dsl_dict",
-    "extract_json_from_response",
     "DSLValidationError",
     # Solving
     "LayoutSolver",

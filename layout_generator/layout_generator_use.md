@@ -102,6 +102,56 @@ sampled = sample_object_names(
 )
 ```
 
+## 算法原理
+
+### 整体流程
+
+```
+物体列表 → [LLM] → DSL → [抽象] → 模板 → [Solver] → 布局坐标
+```
+
+1. **LLM 生成 DSL**：根据物体列表，生成语义化的空间关系描述
+2. **抽象为模板**：将物体名替换为占位符（obj_0, obj_1...），提高复用性
+3. **Solver 求解**：基于约束的几何布局生成
+
+### Solver 算法
+
+**核心思想**：拓扑排序 + 约束驱动的拒绝采样
+
+```python
+# 伪代码
+for each object in topological_order:
+    for attempt in range(max_attempts):
+        # 1. 采样候选位置（根据空间关系约束）
+        position = sample_from_constraints(object.relations)
+        
+        # 2. 验证有效性（边界内 + 无碰撞）
+        if is_valid(position):
+            place_object(position)
+            break
+```
+
+**关键步骤**：
+
+1. **拓扑排序**：根据依赖关系确定摆放顺序
+   - 被引用的物体先摆放（如 "chair in front of table" → table 先放）
+   - 使用 Kahn 算法处理依赖图
+
+2. **约束分解**：将 3D 约束分解为独立维度
+   - 垂直约束（Y 轴）：`on`, `above`, `below`
+   - 水平约束（XZ 平面）：`in front of`, `beside`, `near`...
+
+3. **位置采样**：
+   - **"on" 关系**：精确接触，`y = ref.y + ref.half_y + obj.half_y`
+   - **方向关系**：在指定方向上采样距离（基于物体尺寸）
+   - **径向关系**：随机角度采样
+
+4. **碰撞检测**：AABB 相交测试
+   - 使用分离轴定理（SAT）快速判断
+   - 特殊处理垂直堆叠（允许接触）
+
+5. **拒绝采样**：不满足约束则重新采样，最多尝试 1000 次
+
 ## 数据格式
 
 ### DSL（LLM 输出）
@@ -144,26 +194,48 @@ sampled = sample_object_names(
   "id": 0,
   "description": "...",
   "objects": [
-    {"name": "obj_0", "position": [0.0, 1.1, 0.0], "rotation": 0, "size": 2.2},
-    {"name": "obj_1", "position": [0.0, 0.7, 2.5], "rotation": 180, "size": 1.4},
-    {"name": "obj_2", "position": [0.1, 2.4, 0.1], "rotation": 45, "size": 0.4}
+    {
+      "name": "obj_0", 
+      "position": [0.0, 1.1, 0.0],  // AABB 中心位置 (x, y, z)
+      "rotation": 0,                 // 绕 Y 轴旋转角度（度）
+      "size": [2.2, 2.2, 2.2]       // AABB half-extents (x, y, z)
+    },
+    {
+      "name": "obj_1", 
+      "position": [0.0, 0.7, 2.5], 
+      "rotation": 180, 
+      "size": [1.4, 1.4, 1.4]
+    },
+    {
+      "name": "obj_2", 
+      "position": [0.1, 2.4, 0.1], 
+      "rotation": 45, 
+      "size": [0.4, 0.4, 0.4]
+    }
   ]
 }
 ```
 
+**重要说明**：
+- `position`: AABB（轴对齐包围盒）的中心坐标
+- `size`: AABB 的半长（half-extents），即从中心到边界的距离
+- 完整 AABB 尺寸 = `size * 2`
+
 ## 约束配置
 
-### 尺寸映射
+### 尺寸映射（AABB Half-Extents）
 
-| 类别 | 缩放范围 |
-|------|----------|
-| largest | 2.0 - 2.5 |
-| large | 1.5 - 2.0 |
-| medium | 1.0 - 1.5 |
-| small | 0.6 - 1.0 |
-| smallest | 0.3 - 0.6 |
+在 `constants.py` 的 `SIZE_RANGES` 中定义，当前配置为**立方体**（三个维度相同）：
 
-> 注：所有物体已归一化为单位球内，尺寸为相对比例
+| 类别 | X 范围 (宽) | Y 范围 (高) | Z 范围 (深) |
+|------|------------|------------|------------|
+| largest | 2.0 - 2.5 | 2.0 - 2.5 | 2.0 - 2.5 |
+| large | 1.5 - 2.0 | 1.5 - 2.0 | 1.5 - 2.0 |
+| medium | 1.0 - 1.5 | 1.0 - 1.5 | 1.0 - 1.5 |
+| small | 0.6 - 1.0 | 0.6 - 1.0 | 0.6 - 1.0 |
+| smallest | 0.3 - 0.6 | 0.3 - 0.6 | 0.3 - 0.6 |
+
+> **注**：值为 AABB half-extents（半长），完整尺寸是 `2 * size`
 
 ### 支持的空间关系
 

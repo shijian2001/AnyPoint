@@ -7,7 +7,8 @@ import logging
 from typing import List, Optional, Dict, Any, Tuple, Set
 from concurrent.futures import ThreadPoolExecutor
 from .schema import DSL, ObjectSpec, RelationSpec, Layout, Template
-from .validator import parse_dsl, extract_json_from_response, DSLValidationError
+from .validator import parse_dsl, DSLValidationError
+from .api.json_parser import JSONParser
 from .solver import LayoutSolver, SolverError
 from .constants import VALID_SIZES, VALID_RELATIONS, MIN_OBJECTS, MAX_OBJECTS
 from .api import StreamGenerator
@@ -15,37 +16,113 @@ from .api import StreamGenerator
 logger = logging.getLogger(__name__)
 
 # System prompt for DSL generation
-DSL_SYSTEM_PROMPT = """You are an expert at generating spatial scene descriptions for 3D object placement.
+DSL_SYSTEM_PROMPT = """You are an expert at generating realistic spatial scene layouts for 3D object placement.
 
-Given a list of objects, generate a JSON DSL describing their spatial arrangement. The DSL must follow this exact format:
+Given a list of objects, generate a JSON DSL describing their spatial arrangement in a physically plausible, real-world scene.
 
+## CRITICAL REQUIREMENTS:
+1. ⚠️ MUST include BOTH 'largest' and 'smallest' size categories (one object each minimum)
+2. ⚠️ All relation references MUST be actual object names from the objects list (NO 'scene', 'ground', 'floor', etc.)
+3. ⚠️ Description MUST mention every object by its EXACT name (not aliases)
+4. ⚠️ Description should ONLY state spatial relationships - NO adjectives or attributes (e.g., "large table" → "table", "wooden chair" → "chair")
+5. ⚠️ Layout must be realistic and follow real-world scene logic
+
+## JSON FORMAT:
 ```json
 {
-  "description": "A detailed description mentioning ALL objects by their exact names",
+  "description": "Pure spatial layout description mentioning ALL objects by name without adjectives",
   "objects": [
-    {"name": "object_name", "size": "size_category", "rotation": angle_in_degrees}
+    {"name": "exact_object_name", "size": "size_category", "rotation": degrees}
   ],
   "relations": [
-    {"subject": "object1", "relation": "spatial_relation", "reference": "object2"}
+    {"subject": "object_name", "relation": "spatial_relation", "reference": "another_object_name"}
   ]
 }
 ```
 
-RULES:
-1. Size categories (must include both 'largest' and 'smallest'):
-   - largest, large, medium, small, smallest
+## VALID SIZE CATEGORIES:
+- largest (REQUIRED - assign to one object)
+- large
+- medium  
+- small
+- smallest (REQUIRED - assign to one object)
 
-2. Valid spatial relations:
-   - Horizontal: "in front of", "behind", "to the left of", "to the right of", "beside", "next to", "near", "far from"
-   - Vertical: "on", "above", "below", "under"
-   - Other: "surrounding", "at the center of"
+## VALID SPATIAL RELATIONS:
+- Horizontal: "in front of", "behind", "to the left of", "to the right of", "beside", "next to", "near", "far from"
+- Vertical: "on", "above", "below", "under"
+- Other: "surrounding", "at the center of"
 
-3. The description MUST mention each object by its EXACT name (not aliases)
-4. Rotation: 0-360 degrees, choose reasonable orientations
-5. Relations should be semantically meaningful (e.g., small objects "on" large surfaces)
-6. Avoid impossible configurations (e.g., large object "on" small object)
+## REALISTIC SCENE CONSTRAINTS:
+- **Physical stability**: Objects must have stable support (e.g., items "on" tables, not floating)
+- **Size logic**: Smaller objects typically "on" or "near" larger ones; larger objects rarely "on" smaller ones
+- **Functional relationships**: Objects should be arranged as they would in real scenes (e.g., lamp on desk, cup on table, books on shelf)
+- **Spatial coherence**: Related objects should be grouped (e.g., dining items together, work items together)
+- **Gravity compliance**: Vertical relations must respect gravity (heavy items below, light items above)
+- **Accessibility**: Objects should be reachable and usable in the arrangement
+- **Rotation realism**: Rotation should match typical object orientations (0° for most furniture)
 
-Generate a creative but physically plausible arrangement."""
+## EXAMPLES:
+
+### Example 1: ["table", "lamp", "book"]
+```json
+{
+  "description": "The table is positioned at the center. The lamp is on the table. The book is on the table beside the lamp.",
+  "objects": [
+    {"name": "table", "size": "largest", "rotation": 0},
+    {"name": "lamp", "size": "medium", "rotation": 0},
+    {"name": "book", "size": "smallest", "rotation": 45}
+  ],
+  "relations": [
+    {"subject": "lamp", "relation": "on", "reference": "table"},
+    {"subject": "book", "relation": "on", "reference": "table"},
+    {"subject": "book", "relation": "beside", "reference": "lamp"}
+  ]
+}
+```
+
+### Example 2: ["sofa", "coffee_table", "vase", "remote"]
+```json
+{
+  "description": "The sofa is positioned at the center. The coffee_table is in front of the sofa. The vase is on the coffee_table. The remote is on the coffee_table beside the vase.",
+  "objects": [
+    {"name": "sofa", "size": "largest", "rotation": 0},
+    {"name": "coffee_table", "size": "large", "rotation": 0},
+    {"name": "vase", "size": "small", "rotation": 0},
+    {"name": "remote", "size": "smallest", "rotation": 30}
+  ],
+  "relations": [
+    {"subject": "coffee_table", "relation": "in front of", "reference": "sofa"},
+    {"subject": "vase", "relation": "on", "reference": "coffee_table"},
+    {"subject": "remote", "relation": "on", "reference": "coffee_table"},
+    {"subject": "remote", "relation": "beside", "reference": "vase"}
+  ]
+}
+```
+
+### Example 3: ["desk", "monitor", "keyboard", "mouse", "pen"]
+```json
+{
+  "description": "The desk is at the center. The monitor is on the desk. The keyboard is on the desk in front of the monitor. The mouse is on the desk to the right of the keyboard. The pen is on the desk beside the keyboard.",
+  "objects": [
+    {"name": "desk", "size": "largest", "rotation": 0},
+    {"name": "monitor", "size": "large", "rotation": 0},
+    {"name": "keyboard", "size": "medium", "rotation": 0},
+    {"name": "mouse", "size": "small", "rotation": 0},
+    {"name": "pen", "size": "smallest", "rotation": 45}
+  ],
+  "relations": [
+    {"subject": "monitor", "relation": "on", "reference": "desk"},
+    {"subject": "keyboard", "relation": "on", "reference": "desk"},
+    {"subject": "keyboard", "relation": "in front of", "reference": "monitor"},
+    {"subject": "mouse", "relation": "on", "reference": "desk"},
+    {"subject": "mouse", "relation": "to the right of", "reference": "keyboard"},
+    {"subject": "pen", "relation": "on", "reference": "desk"},
+    {"subject": "pen", "relation": "beside", "reference": "keyboard"}
+  ]
+}
+```
+
+Now generate a realistic, physically plausible spatial arrangement that follows real-world scene logic. Focus purely on spatial relationships without any descriptive adjectives."""
 
 
 def _create_user_prompt(object_names: List[str]) -> str:
@@ -211,7 +288,15 @@ class LayoutGenerator:
 
                 templates.append(template)
                 dsls.append(dsl)
-                logger.info(f"Generated template {template.id} with {template.count} objects")
+                
+                # Log template details
+                relation_summary = [f"{r.subject} {r.relation} {r.reference}" for r in dsl.relations[:3]]
+                if len(dsl.relations) > 3:
+                    relation_summary.append(f"... +{len(dsl.relations)-3} more")
+                logger.info(
+                    f"Generated template {template.id}: {template.count} objects, "
+                    f"{len(dsl.relations)} relations. Sample: {'; '.join(relation_summary)}"
+                )
 
             except Exception as e:
                 logger.error(f"Error processing response {prompt_id}: {e}")
@@ -242,22 +327,26 @@ class LayoutGenerator:
 
     def _validate_dsl_response(self, response: str) -> Optional[str]:
         """Validate LLM response contains valid DSL JSON."""
-        json_str = extract_json_from_response(response)
-        if json_str is None:
+        data = JSONParser.parse(response)
+        if data is None:
             return None
+        
         try:
-            parse_dsl(json_str)
+            parse_dsl(data)
             return response
         except DSLValidationError:
             return None
 
     def _parse_response(self, response: str) -> Optional[DSL]:
         """Parse LLM response to DSL object."""
-        json_str = extract_json_from_response(response)
-        if json_str is None:
+        data = JSONParser.parse(response)
+        if data is None:
+            logger.warning("Failed to parse JSON from response")
             return None
         try:
-            return parse_dsl(json_str)
+            dsl = parse_dsl(data)
+            logger.info(f"Successfully parsed DSL: {len(data.get('objects', []))} objects, {len(data.get('relations', []))} relations")
+            return dsl
         except DSLValidationError as e:
             logger.warning(f"DSL validation failed: {e}")
             return None

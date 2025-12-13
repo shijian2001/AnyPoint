@@ -2,7 +2,7 @@
 
 import json
 import re
-from typing import Tuple, Optional, List, Set
+from typing import Tuple, Optional, List, Set, Union
 from .schema import DSL, ObjectSpec, RelationSpec
 from .constants import VALID_SIZES, VALID_RELATIONS, MIN_OBJECTS, MAX_OBJECTS
 
@@ -150,12 +150,12 @@ def validate_dsl_dict(data: dict) -> Tuple[bool, str]:
     return True, ""
 
 
-def parse_dsl(json_str: str) -> DSL:
+def parse_dsl(json_input: Union[str, dict]) -> DSL:
     """
-    Parse and validate a DSL JSON string.
+    Parse and validate a DSL from JSON string or dict.
 
     Args:
-        json_str: JSON string containing DSL
+        json_input: JSON string or dict containing DSL
 
     Returns:
         Validated DSL object
@@ -163,10 +163,15 @@ def parse_dsl(json_str: str) -> DSL:
     Raises:
         DSLValidationError: If validation fails
     """
-    # Parse JSON
-    is_valid, data, error = validate_json_format(json_str)
-    if not is_valid:
-        raise DSLValidationError(error)
+    # Parse JSON if string
+    if isinstance(json_input, str):
+        is_valid, data, error = validate_json_format(json_input)
+        if not is_valid:
+            raise DSLValidationError(error)
+    elif isinstance(json_input, dict):
+        data = json_input
+    else:
+        raise DSLValidationError(f"Invalid input type: {type(json_input)}")
 
     # Validate structure
     is_valid, error = validate_dsl_dict(data)
@@ -201,39 +206,4 @@ def parse_dsl(json_str: str) -> DSL:
         id=data.get("id"),
         count=data.get("count")
     )
-
-
-def extract_json_from_response(response: str) -> Optional[str]:
-    """
-    Extract JSON content from LLM response that may contain markdown code blocks.
-
-    Args:
-        response: LLM response string
-
-    Returns:
-        Extracted JSON string or None if not found
-    """
-    # Try to find JSON in code blocks first
-    code_block_pattern = r'```(?:json)?\s*\n?([\s\S]*?)\n?```'
-    matches = re.findall(code_block_pattern, response)
-
-    for match in matches:
-        try:
-            json.loads(match.strip())
-            return match.strip()
-        except json.JSONDecodeError:
-            continue
-
-    # Try to find raw JSON object
-    json_pattern = r'\{[\s\S]*\}'
-    matches = re.findall(json_pattern, response)
-
-    for match in matches:
-        try:
-            json.loads(match)
-            return match
-        except json.JSONDecodeError:
-            continue
-
-    return None
 
