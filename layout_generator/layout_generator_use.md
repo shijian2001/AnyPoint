@@ -192,7 +192,7 @@ for each object in topological_order:
 ```json
 {
   "id": 0,
-  "description": "...",
+  "description": "A [obj_0] with a [obj_1] in front and a [obj_2] on top",
   "objects": [
     {
       "name": "obj_0", 
@@ -212,14 +212,27 @@ for each object in topological_order:
       "rotation": 45, 
       "size": [0.4, 0.4, 0.4]
     }
+  ],
+  "relations": [
+    {
+      "subject": "obj_1",
+      "relation": "in front of",
+      "reference": "obj_0"
+    },
+    {
+      "subject": "obj_2",
+      "relation": "on",
+      "reference": "obj_0"
+    }
   ]
 }
 ```
 
-**重要说明**：
-- `position`: AABB（轴对齐包围盒）的中心坐标
-- `size`: AABB 的半长（half-extents），即从中心到边界的距离
-- 完整 AABB 尺寸 = `size * 2`
+**字段说明**：
+- `position`: AABB 中心坐标 (x, y, z)
+- `rotation`: 绕 Y 轴旋转角度（度）
+- `size`: AABB half-extents（半尺寸），完整尺寸 = `size * 2`
+- `relations`: 空间关系约束，用于 QA 生成等下游任务
 
 ## 约束配置
 

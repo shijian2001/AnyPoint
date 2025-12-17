@@ -201,7 +201,12 @@ class LayoutSolver:
             )
             for obj in self.placed.values()
         ]
-        return Layout(objects=objects, description=dsl.description, id=dsl.id)
+        return Layout(
+            objects=objects,
+            description=dsl.description,
+            relations=dsl.relations,
+            id=dsl.id
+        )
 
 
 def solve_dsl(dsl: DSL, seed: Optional[int] = None) -> Optional[Layout]:

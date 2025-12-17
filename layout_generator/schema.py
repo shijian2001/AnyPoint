@@ -74,12 +74,14 @@ class Layout:
     """Final layout with resolved geometric positions."""
     objects: List[LayoutObject]
     description: str
+    relations: List[RelationSpec] = field(default_factory=list)
     id: Optional[int] = None
 
     def to_dict(self) -> dict:
         result = {
             "description": self.description,
-            "objects": [obj.to_dict() for obj in self.objects]
+            "objects": [obj.to_dict() for obj in self.objects],
+            "relations": [rel.to_dict() for rel in self.relations]
         }
         if self.id is not None:
             result["id"] = self.id
