@@ -221,6 +221,9 @@ class LayoutVisualizer:
             
             # Use original colors if available, otherwise assign predefined color
             if has_colors:
+                # Normalize colors to [0, 1] if needed
+                if colors_rgb.max() > 1.0:
+                    colors_rgb = colors_rgb / 255.0
                 pcd.colors = o3d.utility.Vector3dVector(colors_rgb)
             else:
                 color = self.config.object_colors[i % len(self.config.object_colors)]
