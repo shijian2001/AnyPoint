@@ -51,7 +51,7 @@ def main():
     args = parser.parse_args()
     
     # Load layouts
-    with open('data/layout/outputs/layouts.json', 'r') as f:
+    with open('data/layout/outputs_gpt_oss/layouts.json', 'r') as f:
         layouts = json.load(f)
     
     print(f'Total layouts: {len(layouts)}')

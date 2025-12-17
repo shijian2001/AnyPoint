@@ -167,4 +167,6 @@ data/
 
 test.py
 
+test_vis_layout.py
+
 configs/

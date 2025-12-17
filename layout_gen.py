@@ -54,7 +54,7 @@ def main():
     parser.add_argument("--num-layouts", type=int, default=10, help="Number of layouts")
     parser.add_argument("--output", type=str, default="data/layout/outputs", help="Output directory")
     parser.add_argument("--keys-file", type=str, required=True, help="YAML file with API keys")
-    parser.add_argument("--model", type=str, default="DeepSeek-V3", help="LLM model")
+    parser.add_argument("--model", type=str, default="gpt-oss-120b", help="LLM model")
     args = parser.parse_args()
     
     api_keys = yaml.safe_load(open(args.keys_file))["keys"]

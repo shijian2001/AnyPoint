@@ -98,7 +98,7 @@ class LayoutVisualizer:
             name: Object name (without extension)
             
         Returns:
-            Point cloud as numpy array (N, 3)
+            Point cloud as numpy array (N, 3) or (N, 6) with colors
         """
         if name in self._object_cache:
             return self._object_cache[name]
@@ -113,6 +113,10 @@ class LayoutVisualizer:
         else:
             pcd = o3d.io.read_point_cloud(str(path))
             points = np.asarray(pcd.points)
+            # Preserve colors if available
+            if pcd.has_colors():
+                colors = np.asarray(pcd.colors)
+                points = np.hstack([points, colors])
         
         # Normalize to unit sphere centered at origin
         points = self._normalize_point_cloud(points)
@@ -128,27 +132,31 @@ class LayoutVisualizer:
         
         Important: The min/max bounds of the point cloud will be EXACTLY at
         [-0.5, 0.5] in each dimension, ensuring proper contact for "on" relations.
+        
+        Preserves color information if present (columns 3:6).
         """
+        # Separate xyz and optional colors
+        xyz = points[:, :3]
+        colors = points[:, 3:] if points.shape[1] > 3 else None
+        
         # Get actual AABB bounds
-        min_coords = points.min(axis=0)
-        max_coords = points.max(axis=0)
+        min_coords = xyz.min(axis=0)
+        max_coords = xyz.max(axis=0)
         ranges = max_coords - min_coords
         
         # Compute center of AABB (not mean of points!)
         aabb_center = (max_coords + min_coords) / 2
         
         # Center at origin
-        points = points - aabb_center
+        xyz = xyz - aabb_center
         
         # Scale each dimension independently so that
         # min -> -0.5 and max -> 0.5 (EXACTLY)
         if np.any(ranges > 0):
-            points = points / ranges  # Now points are in [-0.5, 0.5] exactly
-            # Old: Uniform scaling to preserve aspect ratio
-            # max_extent = np.abs(points).max(axis=0)
-            # points = points / (max_extent.max() * 2)
+            xyz = xyz / ranges  # Now points are in [-0.5, 0.5] exactly
         
-        return points
+        # Recombine with colors if present
+        return np.hstack([xyz, colors]) if colors is not None else xyz
     
     def load_layout(self, layout: dict, object_mapping: Optional[Dict[str, str]] = None) -> 'LayoutVisualizer':
         """Load a layout specification.
@@ -199,18 +207,26 @@ class LayoutVisualizer:
                 # No mapping: use default cube
                 template = self._create_placeholder_cube()
             
-            # Transform object
-            transformed = self._transform_object(template, position, rotation, size)
+            # Separate geometry and colors (if present)
+            has_colors = template.shape[1] == 6
+            points_xyz = template[:, :3]
+            colors_rgb = template[:, 3:6] if has_colors else None
             
-            # Create Open3D point cloud with color
+            # Transform geometry
+            transformed = self._transform_object(points_xyz, position, rotation, size)
+            
+            # Create Open3D point cloud
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(transformed)
             
-            # Assign color based on object index
-            color = self.config.object_colors[i % len(self.config.object_colors)]
-            pcd.colors = o3d.utility.Vector3dVector(
-                np.tile(color, (len(transformed), 1))
-            )
+            # Use original colors if available, otherwise assign predefined color
+            if has_colors:
+                pcd.colors = o3d.utility.Vector3dVector(colors_rgb)
+            else:
+                color = self.config.object_colors[i % len(self.config.object_colors)]
+                pcd.colors = o3d.utility.Vector3dVector(
+                    np.tile(color, (len(transformed), 1))
+                )
             
             self._transformed_objects.append(pcd)
             self._object_labels.append(obj_name)
@@ -234,28 +250,19 @@ class LayoutVisualizer:
             n_samples: Target number of points (default: 8192)
             
         Returns:
-            Sampled and normalized point cloud (n_samples, 3)
+            Sampled and normalized point cloud (n_samples, 3) or (n_samples, 6) with colors
         """
-        # Load raw point cloud
+        # Load raw point cloud (preserves colors if available)
         raw_points = self.load_object_template(name)
-        
-        # Handle both (N, 3) and (N, 6) formats
-        if raw_points.shape[1] == 6:
-            # Take only XYZ coordinates
-            raw_points = raw_points[:, :3]
-        
         n_raw = len(raw_points)
         
+        # Sample indices
         if n_raw >= n_samples:
-            # Downsample: random sampling without replacement
             indices = np.random.choice(n_raw, size=n_samples, replace=False)
-            sampled = raw_points[indices]
         else:
-            # Upsample: random sampling with replacement
             indices = np.random.choice(n_raw, size=n_samples, replace=True)
-            sampled = raw_points[indices]
         
-        return sampled
+        return raw_points[indices]
     
     def _transform_object(
         self,
