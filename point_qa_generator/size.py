@@ -2,11 +2,15 @@ import numpy as np
 from typing import List, Dict, Any, Tuple, Set
 from tqdm import tqdm
 from .base import BasePointQAGenerator, TaskPlan, Task
-from .utils import GRID_POSITIONS, get_relative_position, ATTRIBUTES
+from .utils import ATTRIBUTES
 
 
 class SizeGenerator(BasePointQAGenerator):
-    """Base class for size-related generators."""
+    """Base class for size-related generators.
+    
+    Uses layout's 'size' field (half-extents) for volume-based comparisons.
+    Layout system guarantees one largest and one smallest object per scene.
+    """
 
     def validate_generator_config(self, config: Dict[str, Any]) -> None:
         """Validate size generator configuration."""
@@ -17,64 +21,10 @@ class SizeGenerator(BasePointQAGenerator):
 
     def _get_size_type(self, task_plan: TaskPlan) -> str:
         return task_plan.generator_config['size_type']
-
-    def _generate_scale_factors(self, all_objects: List[Dict], size_type: str) -> List[float]:
-        """Generate size-differentiated scale factors for objects."""
-        base_scale = 0.5
-        scale_variation = 0.3
-        
-        scale_factors = []
-        for i, obj in enumerate(all_objects):
-            if i == 0:  # target object
-                if size_type == "largest":
-                    scale_factor = base_scale + scale_variation
-                else:  # smallest
-                    scale_factor = base_scale - scale_variation
-            else:
-                if size_type == "largest":
-                    scale_factor = base_scale + self.rng.uniform(-scale_variation, scale_variation * 0.5)
-                else:  # smallest
-                    scale_factor = base_scale + self.rng.uniform(scale_variation * 0.5, scale_variation)
-            
-            scale_factor = max(0.1, min(1.0, scale_factor))
-            scale_factors.append(scale_factor)
-        
-        return scale_factors
-
-    def _generate_size_differentiated_scene(self, task_plan: TaskPlan, target_obj: Dict, 
-                                          size_type: str) -> Tuple[List[Dict], List[int], List[float], List[float]]:
-        """Generate scene with size-differentiated objects."""
-        used_objects = {target_obj["object_id"]}
-        available_objects = [obj for obj in self.metadata.objects
-                           if obj["object_id"] not in used_objects]
-        
-        num_distractors = min(task_plan.num_scene_distractors, len(available_objects))
-        distractor_objects = self.rng.choice(available_objects, size=num_distractors,
-                                           replace=False).tolist() if num_distractors > 0 else []
-        
-        all_objects = [target_obj] + distractor_objects
-        
-        available_grids = list(range(9))
-        selected_grids = self.rng.choice(available_grids, size=len(all_objects), replace=False).tolist()
-        
-        angles = [self.metadata.sample_angle() for _ in all_objects]
-        scale_factors = self._generate_scale_factors(all_objects, size_type)
-        
-        return all_objects, selected_grids, angles, scale_factors
-
-    def _generate_scene_distractors(self, task_plan: TaskPlan, target_obj: Dict, 
-                                   ref_obj: Dict = None) -> List[Dict]:
-        """Generate scene distractor objects for size questions."""
-        used_objects = {target_obj["object_id"]}
-        if ref_obj:
-            used_objects.add(ref_obj["object_id"])
-            
-        available_objects = [obj for obj in self.metadata.objects
-                           if obj["object_id"] not in used_objects]
-        
-        num_distractors = min(task_plan.num_scene_distractors, len(available_objects))
-        return self.rng.choice(available_objects, size=num_distractors,
-                               replace=False).tolist() if num_distractors > 0 else []
+    
+    def _calculate_volume(self, size: List[float]) -> float:
+        """Calculate volume from AABB half-extents."""
+        return size[0] * size[1] * size[2] * 8  # Full AABB volume
 
 
 class WhatSizeGenerator(SizeGenerator):
@@ -83,57 +33,68 @@ class WhatSizeGenerator(SizeGenerator):
     def count_possible_tasks(self, task_plan: TaskPlan) -> int:
         """Count possible task combinations."""
         self.validate_generator_config(task_plan.generator_config)
-        max_distractors = min(task_plan.num_scene_distractors, len(self.metadata.objects) - 1)
-        return len(self.metadata.objects) * (max_distractors + 1) * 10
+        return len(self.layouts) * 2 if self.layouts else 500
 
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
-        """Generate what-size tasks."""
+        """Generate what-size tasks using layout system."""
         self.validate_generator_config(task_plan.generator_config)
         size_type = self._get_size_type(task_plan)
-        
-        possible_tasks = self.count_possible_tasks(task_plan)
-        if num_tasks > possible_tasks:
-            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
 
         tasks = []
         seen_combinations = set()
 
         with tqdm(total=num_tasks, desc=f"Generating what-{size_type} tasks") as pbar:
             while len(tasks) < num_tasks:
-                target_obj = self.rng.choice(self.metadata.objects)
+                # Sample layout
+                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=2)
                 
-                all_objects, all_grids, angles, scale_factors = self._generate_size_differentiated_scene(
-                    task_plan, target_obj, size_type)
+                # Calculate volumes for all objects
+                volumes = []
+                for i, obj_spec in enumerate(layout["objects"]):
+                    size = obj_spec["size"]
+                    volume = self._calculate_volume(size)
+                    volumes.append((i, obj_spec["name"], volume))
                 
-                combo_key = (target_obj["object_id"], size_type, tuple(obj["object_id"] for obj in all_objects[1:]))
+                # Find largest or smallest
+                if size_type == "largest":
+                    target_idx, target_placeholder, _ = max(volumes, key=lambda x: x[2])
+                else:  # smallest
+                    target_idx, target_placeholder, _ = min(volumes, key=lambda x: x[2])
+                
+                target_obj = object_mapping[target_placeholder]
+                
+                combo_key = (target_obj["object_id"], size_type)
                 if combo_key in seen_combinations:
                     continue
                 seen_combinations.add(combo_key)
                 
-                point_cloud = self._create_point_cloud_scene(all_objects, all_grids, angles, scale_factors)
+                # Create scene
+                point_cloud = self._create_point_cloud_from_layout(layout, object_mapping)
                 
+                # Generate question and answer
                 question = f"What is the {size_type} object in the scene?"
                 correct_answer = target_obj["object_name"]
                 
-                scene_object_names_wo_answer = [obj["object_name"] for obj in all_objects if obj != target_obj]
+                # Candidates: scene objects + global supplement
+                scene_candidates = [
+                    object_mapping[obj["name"]]["object_name"]
+                    for obj in layout["objects"]
+                    if obj["name"] != target_placeholder
+                ]
                 
-                num_distractors = task_plan.num_options - 1
-                if len(scene_object_names_wo_answer) >= num_distractors:
-                    candidates = scene_object_names_wo_answer
-                else:
-                    num_needed_from_global = num_distractors - len(scene_object_names_wo_answer)
-                    available_global_objects = [obj for obj in self.metadata.objects 
-                                              if obj not in all_objects]
-                    
-                    if len(available_global_objects) >= num_needed_from_global:
-                        random_object_names = [obj["object_name"] for obj in self.rng.choice(
-                            available_global_objects, size=num_needed_from_global, replace=False)]
-                    else:
-                        random_object_names = [obj["object_name"] for obj in available_global_objects]
-                    
-                    candidates = list(set(scene_object_names_wo_answer + random_object_names))
+                num_needed = task_plan.num_options - 1
+                if len(scene_candidates) < num_needed:
+                    used_names = set([correct_answer] + scene_candidates)
+                    available = [obj["object_name"] for obj in self.metadata.objects 
+                                if obj["object_name"] not in used_names]
+                    num_to_add = num_needed - len(scene_candidates)
+                    if available and num_to_add > 0:
+                        additional = self.rng.choice(available, size=min(num_to_add, len(available)), replace=False)
+                        scene_candidates.extend(additional)
                 
-                options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                options, answer_id = self._compose_options(
+                    correct_answer, scene_candidates, task_plan.num_options
+                )
                 
                 task = Task(
                     point=f"{len(tasks):06d}.npy",
@@ -155,99 +116,74 @@ class ListAttributeSizeGenerator(SizeGenerator):
     def count_possible_tasks(self, task_plan: TaskPlan) -> int:
         """Count possible task combinations."""
         self.validate_generator_config(task_plan.generator_config)
-        
-        valid_targets = 0
-        for obj in self.metadata.objects:
-            for attribute in ATTRIBUTES:
-                if self.metadata.has_components_with_attribute(obj, attribute):
-                    valid_targets += 1
-                    break
-        
-        max_distractors = min(task_plan.num_scene_distractors, len(self.metadata.objects) - 1)
-        return valid_targets * 4 * (max_distractors + 1) * 5
+        return len(self.layouts) * 4 * 2 if self.layouts else 800
 
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
-        """Generate list-attribute-size tasks."""
+        """Generate list-attribute-size tasks using layout system."""
         self.validate_generator_config(task_plan.generator_config)
         size_type = self._get_size_type(task_plan)
-        
-        possible_tasks = self.count_possible_tasks(task_plan)
-        if num_tasks > possible_tasks:
-            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
 
         tasks = []
         seen_combinations = set()
 
         with tqdm(total=num_tasks, desc=f"Generating list-attribute-{size_type} tasks") as pbar:
             while len(tasks) < num_tasks:
+                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=2)
                 attribute = self.rng.choice(ATTRIBUTES)
                 
-                valid_targets = [obj for obj in self.metadata.objects
-                               if self.metadata.has_components_with_attribute(obj, attribute)]
-                if not valid_targets:
+                # Find largest/smallest with attribute
+                valid_volumes = []
+                for i, obj_spec in enumerate(layout["objects"]):
+                    obj = object_mapping[obj_spec["name"]]
+                    if self.metadata.has_components_with_attribute(obj, attribute):
+                        volume = self._calculate_volume(obj_spec["size"])
+                        valid_volumes.append((i, obj_spec["name"], obj, volume))
+                
+                if not valid_volumes:
                     continue
                 
-                target_obj = self.rng.choice(valid_targets)
+                if size_type == "largest":
+                    _, _, target_obj, _ = max(valid_volumes, key=lambda x: x[3])
+                else:
+                    _, _, target_obj, _ = min(valid_volumes, key=lambda x: x[3])
                 
-                all_objects, all_grids, angles, scale_factors = self._generate_size_differentiated_scene(
-                    task_plan, target_obj, size_type)
+                # Get attributes
+                components = self.metadata.get_object_components_with_attribute(target_obj, attribute)
+                attr_values = set(comp[attribute] for comp in components)
+                if not attr_values:
+                    continue
                 
-                combo_key = (target_obj["object_id"], size_type, attribute, 
-                           tuple(obj["object_id"] for obj in all_objects[1:]))
+                correct_answer = ", ".join(sorted(attr_values))
+                combo_key = (target_obj["object_id"], size_type, attribute)
                 if combo_key in seen_combinations:
                     continue
                 seen_combinations.add(combo_key)
                 
-                point_cloud = self._create_point_cloud_scene(all_objects, all_grids, angles, scale_factors)
+                # Create scene
+                point_cloud = self._create_point_cloud_from_layout(layout, object_mapping)
                 
-                components_with_attr = self.metadata.get_object_components_with_attribute(target_obj, attribute)
-                attribute_values = set()
-                for component in components_with_attr:
-                    attribute_values.add(component[attribute])
-                
-                if not attribute_values:
-                    continue
-                
+                # Generate question
                 question = f"List all {attribute}s in the components of the {size_type} object in the scene?"
-                correct_answer = ", ".join(sorted(attribute_values))
                 
+                # Generate candidates from global pool
+                all_values = self.metadata.get_attribute_values(attribute)
+                correct_set = set(correct_answer.split(", "))
                 candidates = set()
                 
-                for obj in all_objects[1:]:
-                    obj_components = self.metadata.get_object_components_with_attribute(obj, attribute)
-                    obj_values = set()
-                    for comp in obj_components:
-                        obj_values.add(comp[attribute])
-                    
-                    if obj_values:
-                        obj_answer = ", ".join(sorted(obj_values))
-                        if obj_answer != correct_answer:
-                            candidates.add(obj_answer)
+                for _ in range(task_plan.num_options * 3):
+                    if len(candidates) >= task_plan.num_options - 1:
+                        break
+                    sample = self.rng.choice(all_values, size=len(correct_set), replace=False)
+                    if set(sample) != correct_set:
+                        candidates.add(", ".join(sorted(sample)))
                 
-                needed = task_plan.num_options - 1
-                if len(candidates) < needed:
-                    all_values = self.metadata.get_attribute_values(attribute)
-                    correct_values_set = set(correct_answer.split(", "))
-                    
-                    for _ in range(min(20, task_plan.num_options * 3)):
-                        num_items = len(correct_values_set)
-                        if num_items > len(all_values):
-                            continue
-                            
-                        sample_values = self.rng.choice(all_values, size=num_items, replace=False)
-                        candidate_values_set = set(sample_values)
-                        
-                        if candidate_values_set != correct_values_set:
-                            candidate = ", ".join(sorted(sample_values))
-                            candidates.add(candidate)
-                        
-                        if len(candidates) >= needed:
-                            break
+                if len(candidates) < task_plan.num_options - 1:
+                    continue
                 
-                candidates = list(candidates)
-                
-                options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
-                
+                options, answer_id = self._compose_options(
+                    correct_answer, list(candidates), task_plan.num_options
+                )
+
                 task = Task(
                     point=f"{len(tasks):06d}.npy",
                     question=question,
@@ -255,7 +191,7 @@ class ListAttributeSizeGenerator(SizeGenerator):
                     answer=correct_answer,
                     answer_id=answer_id
                 )
-                
+
                 tasks.append((task, point_cloud))
                 pbar.update(1)
 
@@ -268,100 +204,74 @@ class CountAttributeSizeGenerator(SizeGenerator):
     def count_possible_tasks(self, task_plan: TaskPlan) -> int:
         """Count possible task combinations."""
         self.validate_generator_config(task_plan.generator_config)
-        
-        valid_targets = 0
-        for obj in self.metadata.objects:
-            for attribute in ATTRIBUTES:
-                if self.metadata.has_components_with_attribute(obj, attribute):
-                    valid_targets += 1
-                    break
-        
-        max_distractors = min(task_plan.num_scene_distractors, len(self.metadata.objects) - 1)
-        return valid_targets * 4 * (max_distractors + 1) * 5
+        return len(self.layouts) * 4 * 2 if self.layouts else 800
 
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
-        """Generate count-attribute-size tasks."""
+        """Generate count-attribute-size tasks using layout system."""
         self.validate_generator_config(task_plan.generator_config)
         size_type = self._get_size_type(task_plan)
-        
-        possible_tasks = self.count_possible_tasks(task_plan)
-        if num_tasks > possible_tasks:
-            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
 
         tasks = []
         seen_combinations = set()
 
         with tqdm(total=num_tasks, desc=f"Generating count-attribute-{size_type} tasks") as pbar:
             while len(tasks) < num_tasks:
+                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=2)
                 attribute = self.rng.choice(ATTRIBUTES)
                 
-                valid_targets = [obj for obj in self.metadata.objects
-                               if self.metadata.has_components_with_attribute(obj, attribute)]
-                if not valid_targets:
+                # Find largest/smallest with attribute
+                valid_volumes = []
+                for i, obj_spec in enumerate(layout["objects"]):
+                    obj = object_mapping[obj_spec["name"]]
+                    if self.metadata.has_components_with_attribute(obj, attribute):
+                        volume = self._calculate_volume(obj_spec["size"])
+                        valid_volumes.append((i, obj_spec["name"], obj, volume))
+                
+                if not valid_volumes:
                     continue
                 
-                target_obj = self.rng.choice(valid_targets)
+                if size_type == "largest":
+                    _, _, target_obj, _ = max(valid_volumes, key=lambda x: x[3])
+                else:
+                    _, _, target_obj, _ = min(valid_volumes, key=lambda x: x[3])
                 
-                all_objects, all_grids, angles, scale_factors = self._generate_size_differentiated_scene(
-                    task_plan, target_obj, size_type)
+                # Count attributes
+                components = self.metadata.get_object_components_with_attribute(target_obj, attribute)
+                attr_values = set(comp[attribute] for comp in components)
+                if not attr_values:
+                    continue
                 
-                combo_key = (target_obj["object_id"], size_type, attribute,
-                           tuple(obj["object_id"] for obj in all_objects[1:]))
+                correct_count = len(attr_values)
+                combo_key = (target_obj["object_id"], size_type, attribute, correct_count)
                 if combo_key in seen_combinations:
                     continue
                 seen_combinations.add(combo_key)
                 
-                point_cloud = self._create_point_cloud_scene(all_objects, all_grids, angles, scale_factors)
+                # Create scene
+                point_cloud = self._create_point_cloud_from_layout(layout, object_mapping)
                 
-                components_with_attr = self.metadata.get_object_components_with_attribute(target_obj, attribute)
-                attribute_values = set()
-                for component in components_with_attr:
-                    attribute_values.add(component[attribute])
-                
-                if not attribute_values:
-                    continue
-                
+                # Generate question and answer
                 question = f"How many {attribute}s are in the components of the {size_type} object in the scene?"
-                correct_count = len(attribute_values)
                 correct_answer = str(correct_count)
                 
-                candidates = set()
+                # Generate numeric candidates
+                candidates = []
+                used = {correct_count}
+                offset = 1
+                while len(candidates) < task_plan.num_options - 1:
+                    if correct_count + offset not in used:
+                        candidates.append(str(correct_count + offset))
+                        used.add(correct_count + offset)
+                    if len(candidates) >= task_plan.num_options - 1:
+                        break
+                    if correct_count - offset >= 0 and correct_count - offset not in used:
+                        candidates.append(str(correct_count - offset))
+                        used.add(correct_count - offset)
+                    offset += 1
                 
-                for obj in all_objects[1:]:
-                    obj_components = self.metadata.get_object_components_with_attribute(obj, attribute)
-                    obj_values = set()
-                    for comp in obj_components:
-                        obj_values.add(comp[attribute])
-                    
-                    obj_count = len(obj_values)
-                    if obj_count != correct_count:
-                        candidates.add(str(obj_count))
-                
-                needed = task_plan.num_options - 1
-                if len(candidates) < needed:
-                    used_numbers = {correct_count} | {int(c) for c in candidates}
-                    
-                    offset = 1
-                    while len(candidates) < needed:
-                        if correct_count + offset not in used_numbers:
-                            candidates.add(str(correct_count + offset))
-                            used_numbers.add(correct_count + offset)
-                        
-                        if len(candidates) >= needed:
-                            break
-                        
-                        if correct_count - offset >= 0 and correct_count - offset not in used_numbers:
-                            candidates.add(str(correct_count - offset))
-                            used_numbers.add(correct_count - offset)
-                        
-                        if len(candidates) >= needed:
-                            break
-                        
-                        offset += 1
-                
-                candidates = list(candidates)
-                
-                options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                options, answer_id = self._compose_options(
+                    correct_answer, candidates, task_plan.num_options
+                )
                 
                 task = Task(
                     point=f"{len(tasks):06d}.npy",
@@ -395,88 +305,72 @@ class WhereSizeGenerator(SizeGenerator):
     def count_possible_tasks(self, task_plan: TaskPlan) -> int:
         """Count possible task combinations."""
         self.validate_generator_config(task_plan.generator_config)
-        reference_mode = self._get_reference_mode(task_plan)
-        
-        if reference_mode == 'no_reference':
-            max_distractors = min(task_plan.num_scene_distractors, len(self.metadata.objects) - 1)
-            return len(self.metadata.objects) * 9 * (max_distractors + 1) * 5
-        else:
-            return len(self.metadata.objects) * (len(self.metadata.objects) - 1) * 9 * 9 * 3
+        return len(self.layouts) * 10 if self.layouts else 1000
 
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
-        """Generate where-size tasks."""
+        """Generate where-size tasks using layout system."""
         self.validate_generator_config(task_plan.generator_config)
         size_type = self._get_size_type(task_plan)
         reference_mode = self._get_reference_mode(task_plan)
         
-        possible_tasks = self.count_possible_tasks(task_plan)
-        if num_tasks > possible_tasks:
-            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
-
+        # Import here to avoid circular dependency
+        from .utils import calculate_relation_from_positions
+        from layout_generator.constants import VALID_RELATIONS
+        
         tasks = []
         seen_combinations = set()
 
-        desc = f"Generating where-{size_type}-{reference_mode} tasks"
+        desc = f"Generating where-{size_type} tasks"
         with tqdm(total=num_tasks, desc=desc) as pbar:
             while len(tasks) < num_tasks:
-                if reference_mode == 'no_reference':
-                    target_obj = self.rng.choice(self.metadata.objects)
-                    ref_obj = None
-                    
-                    all_objects, all_grids, angles, scale_factors = self._generate_size_differentiated_scene(
-                        task_plan, target_obj, size_type)
-                    
-                    combo_key = (target_obj["object_id"], size_type, 'no_reference',
-                               tuple(obj["object_id"] for obj in all_objects[1:]), all_grids[0])
-                    
+                # Sample layout
+                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=2)
+                
+                # Calculate volumes for all objects
+                volumes = []
+                for i, obj_spec in enumerate(layout["objects"]):
+                    volume = self._calculate_volume(obj_spec["size"])
+                    pos = np.array(obj_spec["position"])
+                    volumes.append((i, obj_spec["name"], pos, volume))
+                
+                # Find largest or smallest
+                if size_type == "largest":
+                    target_idx, target_placeholder, target_pos, _ = max(volumes, key=lambda x: x[3])
                 else:
-                    target_obj, ref_obj = self.rng.choice(self.metadata.objects, size=2, replace=False)
-                    
-                    distractor_objects = self._generate_scene_distractors(task_plan, target_obj, ref_obj)
-                    
-                    all_objects = [target_obj, ref_obj] + distractor_objects
-                    
-                    available_grids = list(range(9))
-                    all_grids = self.rng.choice(available_grids, size=len(all_objects), replace=False).tolist()
-                    
-                    angles = [self.metadata.sample_angle() for _ in all_objects]
-                    scale_factors = self._generate_scale_factors(all_objects, size_type)
-                    
-                    combo_key = (target_obj["object_id"], ref_obj["object_id"], size_type, reference_mode,
-                               tuple(obj["object_id"] for obj in all_objects[2:]), all_grids[0], all_grids[1])
-
+                    target_idx, target_placeholder, target_pos, _ = min(volumes, key=lambda x: x[3])
+                
+                target_obj = object_mapping[target_placeholder]
+                
+                # Pick reference object (exclude target)
+                ref_candidates = [(i, name, pos) for i, name, pos, _ in volumes if i != target_idx]
+                if not ref_candidates:
+                    continue
+                ref_idx, ref_placeholder, ref_pos = self.rng.choice(ref_candidates)
+                ref_obj = object_mapping[ref_placeholder]
+                
+                combo_key = (target_obj["object_id"], ref_obj["object_id"], size_type)
                 if combo_key in seen_combinations:
                     continue
                 seen_combinations.add(combo_key)
                 
-                point_cloud = self._create_point_cloud_scene(all_objects, all_grids, angles, scale_factors)
+                # Create scene
+                point_cloud = self._create_point_cloud_from_layout(layout, object_mapping)
                 
+                # Calculate spatial relation
+                correct_answer = calculate_relation_from_positions(target_pos, ref_pos)
+                
+                # Generate question based on reference mode
                 if reference_mode == 'no_reference':
                     question = f"Where is the {size_type} object in the scene?"
-                    correct_answer = GRID_POSITIONS[all_grids[0]]
-                    candidates = [GRID_POSITIONS[g] for g in range(9) if GRID_POSITIONS[g] != correct_answer]
-                    
                 elif reference_mode == 'with_reference':
                     question = f"Where is the {size_type} object in the scene with respect to the {ref_obj['object_name']}?"
-                    correct_answer = get_relative_position(all_grids[0], all_grids[1])
-                    candidates = []
-                    for g in range(9):
-                        if g != all_grids[0]:
-                            rel_pos = get_relative_position(g, all_grids[1])
-                            if rel_pos != correct_answer:
-                                candidates.append(rel_pos)
-                    candidates = list(set(candidates))
-                    
                 else:  # reference_to_target
                     question = f"Where is the {ref_obj['object_name']} with respect to the {size_type} object in the scene?"
-                    correct_answer = get_relative_position(all_grids[1], all_grids[0])
-                    candidates = []
-                    for g in range(9):
-                        if g != all_grids[1]:
-                            rel_pos = get_relative_position(g, all_grids[0])
-                            if rel_pos != correct_answer:
-                                candidates.append(rel_pos)
-                    candidates = list(set(candidates))
+                    # Swap positions for reference_to_target mode
+                    correct_answer = calculate_relation_from_positions(ref_pos, target_pos)
+                
+                # Candidates from VALID_RELATIONS
+                candidates = [rel for rel in VALID_RELATIONS if rel != correct_answer]
                 
                 options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
                 

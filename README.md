@@ -18,18 +18,18 @@ pip install -r requirements.txt
 ```python
 from point_qa_generator import PointQAGenerator, TaskPlan
 
-# Initialize generator
+# Initialize generator with layout system
 generator = PointQAGenerator(
-    jsonl_file="/path/to/metadata.jsonl",  # Object metadata
-    pcd_dir="/path/to/point_clouds",       # Point cloud directory
+    metadata_file="/path/to/metadata.jsonl",  # Object metadata
+    pcd_dir="/path/to/point_clouds",          # Point cloud directory
+    layouts_file="/path/to/layouts.json",     # Layout definitions
     seed=42
 )
 
 # Create task plan
 task_plan = TaskPlan(
     generator_type="what_distance",
-    num_options=4,
-    num_scene_distractors=2,
+    num_options=4,  # Number of multiple choice options
     seed=42,
     generator_config={"distance_type": "closest"}
 )
@@ -59,19 +59,18 @@ viz.visualize(ColorScheme.HEIGHT)  # Visualize by height
 task_plan = TaskPlan(
     generator_type="what_distance",
     num_options=4,
-    num_scene_distractors=3,
     generator_config={"distance_type": "closest"}  # or "farthest"
 )
 ```
 
 #### `where_distance`  
-**Question Type**: "Where is the object that is closest/farthest from the [reference_object]?"
+**Question Type**: "Where is the object that is closest/farthest from the [reference_object]?"  
+**Answer Options**: Spatial relations from layout generator (e.g., "in front of", "beside", "above")
 
 ```python
 task_plan = TaskPlan(
     generator_type="where_distance",
     num_options=4,
-    num_scene_distractors=2,
     generator_config={"distance_type": "farthest"}
 )
 ```
@@ -83,7 +82,6 @@ task_plan = TaskPlan(
 task_plan = TaskPlan(
     generator_type="list_attribute_distance",
     num_options=4,
-    num_scene_distractors=2,
     generator_config={"distance_type": "closest"}
 )
 ```
@@ -95,7 +93,6 @@ task_plan = TaskPlan(
 task_plan = TaskPlan(
     generator_type="count_attribute_distance",
     num_options=4,
-    num_scene_distractors=2,
     generator_config={"distance_type": "farthest"}
 )
 ```
@@ -108,8 +105,7 @@ task_plan = TaskPlan(
 ```python
 task_plan = TaskPlan(
     generator_type="what_attribute",
-    num_options=4,
-    num_scene_distractors=2
+    num_options=4
 )
 ```
 
@@ -119,8 +115,7 @@ task_plan = TaskPlan(
 ```python
 task_plan = TaskPlan(
     generator_type="list_attribute",
-    num_options=4,
-    num_scene_distractors=3
+    num_options=4
 )
 ```
 
@@ -130,14 +125,11 @@ task_plan = TaskPlan(
 ```python
 task_plan = TaskPlan(
     generator_type="count_attribute",
-    num_options=4,
-    num_scene_distractors=1
+    num_options=4
 )
 ```
 
 ### 3. Number-Based Generators
-
-> ⚠️ **Important**: Number generators ignore `num_scene_distractors` and use internal object count logic.
 
 #### `count_object`
 **Question Type**: "How many [object] in the scene?"
@@ -145,8 +137,7 @@ task_plan = TaskPlan(
 ```python
 task_plan = TaskPlan(
     generator_type="count_object",
-    num_options=4,
-    # num_scene_distractors is ignored
+    num_options=4
 )
 ```
 
@@ -192,7 +183,6 @@ task_plan = TaskPlan(
 task_plan = TaskPlan(
     generator_type="what_size",
     num_options=4,
-    num_scene_distractors=2,
     generator_config={"size_type": "largest"}  # or "smallest"
 )
 ```
@@ -204,7 +194,6 @@ task_plan = TaskPlan(
 task_plan = TaskPlan(
     generator_type="list_attribute_size",
     num_options=4,
-    num_scene_distractors=3,
     generator_config={"size_type": "smallest"}
 )
 ```
@@ -216,19 +205,18 @@ task_plan = TaskPlan(
 task_plan = TaskPlan(
     generator_type="count_attribute_size",
     num_options=4,
-    num_scene_distractors=2,
     generator_config={"size_type": "largest"}
 )
 ```
 
 #### `where_size`
-**Question Type**: "Where is the largest/smallest object in the scene?" (with configurable reference modes)
+**Question Type**: "Where is the largest/smallest object in the scene?"  
+**Answer Options**: Spatial relations from layout generator (e.g., "in front of", "beside", "above")
 
 ```python
 task_plan = TaskPlan(
     generator_type="where_size",
     num_options=4,
-    num_scene_distractors=2,
     generator_config={
         "size_type": "largest",
         "reference_mode": "with_reference"  # "no_reference", "reference_to_target"
@@ -242,7 +230,6 @@ task_plan = TaskPlan(
 
 - **`generator_type`** (str): Type of generator to use
 - **`num_options`** (int, 2-6): Number of multiple choice options
-- **`num_scene_distractors`** (int, 0-7): Number of distractor objects in scene
 - **`seed`** (int): Random seed for reproducibility
 - **`generator_config`** (dict): Generator-specific configuration
 
@@ -259,11 +246,9 @@ task_plan = TaskPlan(
 
 ### 🔴 Critical Warnings
 
-1. **Number Generators**: All number-based generators (`count_object`, `frequent_object`, `list_attribute_frequent`, `count_attribute_frequent`) **ignore** the `num_scene_distractors` parameter. They use internal logic to create scenes with varying object counts (3-9 objects) to ensure meaningful frequency-based questions.
+1. **Layout System**: The system uses pre-generated layouts that define object positions, sizes, and spatial relations. Each layout contains 2-9 objects with guaranteed size variations (one largest, one smallest).
 
-2. **Grid System Limitation**: `num_scene_distractors` is limited to 0-7 due to the 3×3 grid positioning system.
-
-3. **Metadata Requirements**: Objects must have component-level attributes (material, color, shape, texture) for attribute-based generators to work properly.
+2. **Metadata Requirements**: Objects must have component-level attributes (material, color, shape, texture) for attribute-based generators to work properly.
 
 ### 📁 Output Structure
 
@@ -276,3 +261,14 @@ output_directory/
 ├── tasks.jsonl            # Question-answer pairs
 └── tasks_info.json        # Generation metadata and statistics
 ```
+
+## Future Generators (Based on Layout Relations)
+
+The layout system provides rich semantic relations between objects, enabling more advanced question types:
+
+- **Relation-based What**: "What is the object **on** the table?"
+- **Relation-based Where**: "Where is the chair **relative to** the table?"
+- **Complex Reasoning**: "What is the object that is on the largest object?"
+- **Multi-hop Questions**: "What is beside the object in front of the lamp?"
+
+See `layout_generator/constants.py::VALID_RELATIONS` for available spatial relations.

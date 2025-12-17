@@ -1,5 +1,6 @@
 import numpy as np
 from typing import List
+from layout_generator.constants import VALID_RELATIONS
 
 # =============================================================================
 # CONSTANTS
@@ -7,34 +8,6 @@ from typing import List
 
 # Attribute types used in generators
 ATTRIBUTES = ["material", "color", "shape", "texture"]
-
-# 3x3 Grid system constants
-GRID_POSITIONS = {
-    0: "top left", 1: "top center", 2: "top right",
-    3: "middle left", 4: "center", 5: "middle right", 
-    6: "bottom left", 7: "bottom center", 8: "bottom right"
-}
-
-GRID_COORDINATES = {
-    0: [-2.0, 2.0], 1: [0.0, 2.0], 2: [2.0, 2.0],
-    3: [-2.0, 0.0], 4: [0.0, 0.0], 5: [2.0, 0.0],
-    6: [-2.0, -2.0], 7: [0.0, -2.0], 8: [2.0, -2.0]
-}
-
-# 3x3 Grid relative distance mapping
-# Each key represents a reference grid position (0-8)
-# Each value is a list of lists, where inner lists contain grids at the same distance level
-RELATIVE_DISTANCE = {
-    '0': [[1, 3], [4], [2, 6], [5, 7], [8]],
-    '1': [[0, 4, 2], [3, 5], [7], [6, 8]],
-    '2': [[1, 5], [4], [0, 8], [3, 7], [6]],
-    '3': [[0, 4, 6], [1, 7], [5], [2, 8]],
-    '4': [[1, 3, 5, 7], [0, 2, 6, 8]],
-    '5': [[2, 4, 8], [1, 7], [3], [0, 6]],
-    '6': [[3, 7], [4], [0, 8], [1, 5], [2]],
-    '7': [[4, 6, 8], [3, 5], [1], [2, 0]],
-    '8': [[5, 7], [4], [2, 6], [1, 3], [0]],
-}
 
 # Number generator configurations: (num_types, count_distribution)
 # Each distribution ensures unique most/least frequencies for number-based questions
@@ -50,103 +23,37 @@ NUMBER_GENERATOR_CONFIGS = {
 
 
 # =============================================================================
-# DISTANCE UTILITY FUNCTIONS
+# SPATIAL RELATION FUNCTIONS
 # =============================================================================
 
-def get_relative_distance_level(ref_grid: int, target_grid: int) -> int:
-    """Get the distance level between reference and target grids.
+def calculate_relation_from_positions(target_pos: np.ndarray, ref_pos: np.ndarray) -> str:
+    """Calculate spatial relation from 3D positions using dominant axis method.
+    
+    Uses the axis with largest absolute difference to determine relation:
+    - X-axis dominant: "to the left of" / "to the right of"
+    - Y-axis dominant: "above" / "below"
+    - Z-axis dominant: "in front of" / "behind"
     
     Args:
-        ref_grid: Reference grid position (0-8)
-        target_grid: Target grid position (0-8)
+        target_pos: Target object position [x, y, z]
+        ref_pos: Reference object position [x, y, z]
         
     Returns:
-        Distance level (0 = closest, higher = farther), or -1 if not found
+        Spatial relation string from VALID_RELATIONS
     """
-    for idx, level in enumerate(RELATIVE_DISTANCE[str(ref_grid)]):
-        if target_grid in level:
-            return idx
-    return -1
-
-
-def get_max_distance_level(ref_grid: int) -> int:
-    """Get the maximum distance level from reference grid.
+    delta = np.array(target_pos) - np.array(ref_pos)
+    abs_delta = np.abs(delta)
     
-    Args:
-        ref_grid: Reference grid position (0-8)
-        
-    Returns:
-        Maximum distance level from this grid
-    """
-    return len(RELATIVE_DISTANCE[str(ref_grid)]) - 1
-
-
-def get_farther_grids(ref_grid: int, target_grid: int) -> List[int]:
-    """Get all grids farther than target from reference.
+    # Find dominant axis
+    dominant_axis = np.argmax(abs_delta)
     
-    Args:
-        ref_grid: Reference grid position (0-8)
-        target_grid: Target grid position (0-8)
-        
-    Returns:
-        List of grid positions farther than target from reference
-    """
-    ref_level = get_relative_distance_level(ref_grid, target_grid)
-    farther_grids = []
-    for level in RELATIVE_DISTANCE[str(ref_grid)][ref_level + 1:]:
-        farther_grids.extend(level)
-    return farther_grids
-
-
-def get_closer_grids(ref_grid: int, target_grid: int) -> List[int]:
-    """Get all grids closer than target from reference.
-    
-    Args:
-        ref_grid: Reference grid position (0-8)
-        target_grid: Target grid position (0-8)
-        
-    Returns:
-        List of grid positions closer than target from reference
-    """
-    ref_level = get_relative_distance_level(ref_grid, target_grid)
-    closer_grids = []
-    for level in RELATIVE_DISTANCE[str(ref_grid)][:ref_level]:
-        closer_grids.extend(level)
-    return closer_grids
-
-
-def get_relative_position(target_grid: int, ref_grid: int) -> str:
-    """Get relative position description of target with respect to reference.
-    
-    Grid layout (0-8):
-    0 1 2
-    3 4 5  
-    6 7 8
-    
-    Args:
-        target_grid: Target grid position (0-8)
-        ref_grid: Reference grid position (0-8)
-        
-    Returns:
-        String description of relative position
-    """
-    target_row, target_col = divmod(target_grid, 3)
-    ref_row, ref_col = divmod(ref_grid, 3)
-    
-    row_diff = target_row - ref_row
-    col_diff = target_col - ref_col
-    
-    # Determine relative position
-    if row_diff == 0 and col_diff == 0:
-        return "at the same position as"
-    elif row_diff == 0:  # Same row
-        return "to the right of" if col_diff > 0 else "to the left of"
-    elif col_diff == 0:  # Same column
-        return "below" if row_diff > 0 else "above"
-    else:  # Diagonal
-        vertical = "below" if row_diff > 0 else "above"
-        horizontal = "to the right of" if col_diff > 0 else "to the left of"
-        return f"{vertical} and {horizontal}"
+    # Map to relation based on dominant axis and direction
+    if dominant_axis == 0:  # X-axis
+        return "to the right of" if delta[0] > 0 else "to the left of"
+    elif dominant_axis == 1:  # Y-axis
+        return "above" if delta[1] > 0 else "below"
+    else:  # Z-axis
+        return "in front of" if delta[2] > 0 else "behind"
 
 
 # =============================================================================

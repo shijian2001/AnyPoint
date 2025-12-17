@@ -19,32 +19,54 @@ class NumberGenerator(BasePointQAGenerator):
     def _get_frequency_type(self, task_plan: TaskPlan) -> str:
         return task_plan.generator_config['frequency_type']
 
-    def _generate_object_counts(self, task_plan: TaskPlan) -> Tuple[List[Dict], List[int], Dict[str, int]]:
-        """Generate objects with counts ensuring unique most/least frequencies."""
-        # Randomly decide total objects (3-9)
-        total_objects = self.rng.randint(3, 10)
+    def _generate_layout_with_object_counts(self, task_plan: TaskPlan) -> Tuple[Dict, Dict[str, Dict], Dict[str, int]]:
+        """Generate layout-driven object counts with unique most/least frequencies.
         
-        # Choose configuration from utils
+        Uses layout system with many-to-one mapping: multiple placeholders map to same object.
+        Layout-driven: First sample a layout, then use its object count.
+        
+        Returns:
+            Tuple of (layout, object_mapping, object_name_to_count)
+        """
+        # Get layouts suitable for Number generators (3-9 objects)
+        if self.layouts_by_type:
+            usable_layouts = self.layouts_by_type.get('special', [])
+        else:
+            # Fallback if no classification
+            usable_layouts = [l for l in self.layouts if 3 <= len(l["objects"]) <= 9]
+        
+        if not usable_layouts:
+            raise ValueError("No usable layouts for Number generators (need 3-9 objects)")
+        
+        # Sample layout first, then use its object count
+        layout = self.rng.choice(usable_layouts)
+        total_objects = len(layout["objects"])
+        
+        # Choose configuration based on layout's object count
         config_options = NUMBER_GENERATOR_CONFIGS[total_objects]
         chosen_idx = self.rng.randint(len(config_options))
         num_types, object_counts = config_options[chosen_idx]
         object_counts = object_counts.copy()
         
-        # Sample objects and shuffle counts
+        # Sample unique object types (without replacement)
         all_scene_objects = self.rng.choice(self.metadata.objects, size=num_types, replace=False).tolist()
         self.rng.shuffle(object_counts)
         
-        # Create expanded object list
-        objects_list = []
+        # Create object mapping: multiple placeholders -> same object
+        object_mapping = {}
+        placeholder_idx = 0
         for obj, count in zip(all_scene_objects, object_counts):
-            objects_list.extend([obj] * count)
+            for _ in range(count):
+                placeholder_name = layout["objects"][placeholder_idx]["name"]
+                object_mapping[placeholder_name] = obj
+                placeholder_idx += 1
         
         # Create count mapping
         object_name_to_count = {}
         for obj, count in zip(all_scene_objects, object_counts):
             object_name_to_count[obj["object_name"]] = count
         
-        return objects_list, object_counts, object_name_to_count
+        return layout, object_mapping, object_name_to_count
 
     def _get_target_object_by_frequency(self, object_name_to_count: Dict[str, int], 
                                        frequency_type: str) -> Tuple[str, int]:
@@ -74,7 +96,8 @@ class CountObjectGenerator(NumberGenerator):
         with tqdm(total=num_tasks, desc="Generating count-object tasks") as pbar:
             while len(tasks) < num_tasks:
                 try:
-                    objects_list, object_counts, object_name_to_count = self._generate_object_counts(task_plan)
+                    # Generate layout with object counts (multiple placeholders -> same object)
+                    layout, object_mapping, object_name_to_count = self._generate_layout_with_object_counts(task_plan)
                     
                     # Choose target object to ask about
                     target_obj_name = self.rng.choice(list(object_name_to_count.keys()))
@@ -86,11 +109,8 @@ class CountObjectGenerator(NumberGenerator):
                         continue
                     seen_combinations.add(combo_key)
                     
-                    num_objects = len(objects_list)
-                    selected_grids = self.rng.choice(range(9), size=num_objects, replace=False).tolist()
-                    angles = [self.metadata.sample_angle() for _ in objects_list]
-                    
-                    point_cloud = self._create_point_cloud_scene(objects_list, selected_grids, angles)
+                    # Create scene using layout system
+                    point_cloud = self._create_point_cloud_from_layout(layout, object_mapping)
                     
                     question = f"How many {target_obj_name} in the scene?"
                     correct_answer = str(target_count)
@@ -149,7 +169,8 @@ class FrequentObjectGenerator(NumberGenerator):
         with tqdm(total=num_tasks, desc=f"Generating {frequency_type}-frequent-object tasks") as pbar:
             while len(tasks) < num_tasks:
                 try:
-                    objects_list, object_counts, object_name_to_count = self._generate_object_counts(task_plan)
+                    # Generate layout with object counts
+                    layout, object_mapping, object_name_to_count = self._generate_layout_with_object_counts(task_plan)
                     
                     # Ensure different counts exist
                     unique_counts = set(object_name_to_count.values())
@@ -165,11 +186,8 @@ class FrequentObjectGenerator(NumberGenerator):
                         continue
                     seen_combinations.add(combo_key)
                     
-                    num_objects = len(objects_list)
-                    selected_grids = self.rng.choice(range(9), size=num_objects, replace=False).tolist()
-                    angles = [self.metadata.sample_angle() for _ in objects_list]
-                    
-                    point_cloud = self._create_point_cloud_scene(objects_list, selected_grids, angles)
+                    # Create scene using layout system
+                    point_cloud = self._create_point_cloud_from_layout(layout, object_mapping)
                     
                     question = f"What is the {frequency_type} frequent object in the scene?"
                     correct_answer = target_name
@@ -246,7 +264,8 @@ class ListAttributeFrequentGenerator(NumberGenerator):
                 try:
                     attribute = self.rng.choice(ATTRIBUTES)
                     
-                    objects_list, object_counts, object_name_to_count = self._generate_object_counts(task_plan)
+                    # Generate layout with object counts
+                    layout, object_mapping, object_name_to_count = self._generate_layout_with_object_counts(task_plan)
                     
                     target_name, target_count = self._get_target_object_by_frequency(
                         object_name_to_count, frequency_type)
@@ -269,11 +288,8 @@ class ListAttributeFrequentGenerator(NumberGenerator):
                         continue
                     seen_combinations.add(combo_key)
                     
-                    num_objects = len(objects_list)
-                    selected_grids = self.rng.choice(range(9), size=num_objects, replace=False).tolist()
-                    angles = [self.metadata.sample_angle() for _ in objects_list]
-                    
-                    point_cloud = self._create_point_cloud_scene(objects_list, selected_grids, angles)
+                    # Create scene using layout system
+                    point_cloud = self._create_point_cloud_from_layout(layout, object_mapping)
                     
                     # Get attribute values
                     components_with_attr = self.metadata.get_object_components_with_attribute(target_obj, attribute)
@@ -289,7 +305,8 @@ class ListAttributeFrequentGenerator(NumberGenerator):
                     
                     candidates = set()
                     
-                    unique_objects_in_scene = {obj["object_name"]: obj for obj in objects_list}.values()
+                    # Get unique objects from object_mapping
+                    unique_objects_in_scene = list({obj["object_name"]: obj for obj in object_mapping.values()}.values())
                     for obj in unique_objects_in_scene:
                         if obj["object_name"] != target_name:
                             obj_components = self.metadata.get_object_components_with_attribute(obj, attribute)
@@ -373,7 +390,8 @@ class CountAttributeFrequentGenerator(NumberGenerator):
                 try:
                     attribute = self.rng.choice(ATTRIBUTES)
                     
-                    objects_list, object_counts, object_name_to_count = self._generate_object_counts(task_plan)
+                    # Generate layout with object counts
+                    layout, object_mapping, object_name_to_count = self._generate_layout_with_object_counts(task_plan)
                     
                     target_name, target_count = self._get_target_object_by_frequency(
                         object_name_to_count, frequency_type)
@@ -399,11 +417,8 @@ class CountAttributeFrequentGenerator(NumberGenerator):
                         continue
                     seen_combinations.add(combo_key)
                     
-                    num_objects = len(objects_list)
-                    selected_grids = self.rng.choice(range(9), size=num_objects, replace=False).tolist()
-                    angles = [self.metadata.sample_angle() for _ in objects_list]
-                    
-                    point_cloud = self._create_point_cloud_scene(objects_list, selected_grids, angles)
+                    # Create scene using layout system
+                    point_cloud = self._create_point_cloud_from_layout(layout, object_mapping)
                     
                     # Count unique attribute values
                     components_with_attr = self.metadata.get_object_components_with_attribute(target_obj, attribute)
@@ -420,7 +435,8 @@ class CountAttributeFrequentGenerator(NumberGenerator):
                     
                     candidates = set()
                     
-                    unique_objects_in_scene = {obj["object_name"]: obj for obj in objects_list}.values()
+                    # Get unique objects from object_mapping
+                    unique_objects_in_scene = list({obj["object_name"]: obj for obj in object_mapping.values()}.values())
                     for obj in unique_objects_in_scene:
                         if obj["object_name"] != target_name:
                             obj_components = self.metadata.get_object_components_with_attribute(obj, attribute)
