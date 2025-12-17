@@ -82,13 +82,13 @@ def main():
     
     if args.objects:
         # Use actual object point clouds
-        print(f'\nMode: Loading actual object point clouds (sampled to 8192 points)')
+        print(f'\nMode: Loading actual object point clouds (sampled to {viz.config.n_points_per_object} points)')
         object_mapping = create_object_mapping(layout, DEFAULT_OBJECT_NAMES)
         print(f'Object mapping: {object_mapping}')
         viz.load_layout(layout, object_mapping=object_mapping)
     else:
         # Use default cubes
-        print(f'\nMode: Using default cubes (8192 points each)')
+        print(f'\nMode: Using default cubes ({viz.config.n_points_per_object} points each)')
         viz.load_layout(layout)
     
     print()

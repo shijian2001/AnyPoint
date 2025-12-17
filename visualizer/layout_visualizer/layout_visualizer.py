@@ -20,11 +20,13 @@ class LayoutVisualizationConfig(VisualizationConfig):
         show_ground_plane: Whether to show ground plane
         ground_plane_size: Size of the ground plane
         object_colormap: Color scheme for different objects
+        n_points_per_object: Number of points to sample per object
     """
     show_bounding_boxes: bool = False
     show_labels: bool = True
     show_ground_plane: bool = False
     ground_plane_size: float = 12.0
+    n_points_per_object: int = 8192
     object_colors: List[Tuple[float, float, float]] = field(default_factory=lambda: [
         (0.8, 0.3, 0.3),   # Red
         (0.3, 0.8, 0.3),   # Green
@@ -198,14 +200,16 @@ class LayoutVisualizer:
             # Load template: use object mapping if provided, else use cube
             if object_mapping and obj_name in object_mapping:
                 actual_name = object_mapping[obj_name]
+                display_name = actual_name  # Use actual object name for display
                 try:
-                    template = self._load_and_sample_object(actual_name, n_samples=8192)
+                    template = self._load_and_sample_object(actual_name, n_samples=self.config.n_points_per_object)
                 except (ValueError, FileNotFoundError):
                     # Fallback to cube if object file not found
-                    template = self._create_placeholder_cube()
+                    template = self._create_placeholder_cube(n_points=self.config.n_points_per_object)
             else:
                 # No mapping: use default cube
-                template = self._create_placeholder_cube()
+                display_name = obj_name  # Use placeholder name (obj_0, obj_1, etc.)
+                template = self._create_placeholder_cube(n_points=self.config.n_points_per_object)
             
             # Separate geometry and colors (if present)
             has_colors = template.shape[1] == 6
@@ -232,7 +236,7 @@ class LayoutVisualizer:
                 )
             
             self._transformed_objects.append(pcd)
-            self._object_labels.append(obj_name)
+            self._object_labels.append(display_name)
         
         return self
     
@@ -337,7 +341,7 @@ class LayoutVisualizer:
             self._print_layout_statistics()
         
         # Render
-        title = self._layout.get("description", "Layout Visualization")[:50]
+        title = self._layout.get("description", "Layout Visualization")
         self._render(geometries, title, save_screenshot)
     
     def _create_ground_plane(self) -> o3d.geometry.PointCloud:
@@ -403,7 +407,7 @@ class LayoutVisualizer:
         print("=" * 60)
         
         if self._layout:
-            print(f"Description: {self._layout.get('description', 'N/A')[:80]}")
+            print(f"Description: {self._layout.get('description', 'N/A')}")
             print(f"Objects: {len(self._transformed_objects)}")
             
             for i, (pcd, label) in enumerate(zip(self._transformed_objects, self._object_labels)):
