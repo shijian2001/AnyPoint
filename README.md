@@ -255,11 +255,70 @@ task_plan = TaskPlan(
 ```
 output_directory/
 ├── pcd/                    # Generated point cloud files
-│   ├── 000000.npy
-│   ├── 000001.npy
-│   └── ...
+│   ├── 000000.npy         # Scene point cloud 1
+│   ├── 000001.npy         # Scene point cloud 2
+│   ├── ...
+│   └── metadata.json      # All scenes metadata (layout, objects)
 ├── tasks.jsonl            # Question-answer pairs
 └── tasks_info.json        # Generation metadata and statistics
+```
+
+#### `pcd/metadata.json`
+Contains metadata for all generated scenes:
+```json
+[
+  {
+    "scene_id": 0,
+    "point_cloud": "000000.npy",
+    "layout_id": "layout_0042",
+    "layout_template": "A room with [obj_0] and [obj_1]",
+    "layout_description": "A room with chair and table",
+    "objects": {
+      "count": 7,
+      "details": [
+        {
+          "name": "chair",
+          "object_id": "001df836dd9e46edb196a975e59bb63a",
+          "placeholder": "obj_0"
+        },
+        ...
+      ]
+    }
+  },
+  ...
+]
+```
+
+#### `tasks.jsonl`
+Each line contains one task:
+```json
+{
+  "question_id": 0,
+  "point": "000000.npy",
+  "category": "what_distance_closest",
+  "question": "What is the object that is closest from the chair?",
+  "options": ["table", "lamp", "book", "sofa"],
+  "answer": "table"
+}
+```
+Note: Options are shuffled and answer position is random.
+
+#### `tasks_info.json`
+Generation statistics:
+```json
+{
+  "task_plan": {
+    "generator_type": "what_distance",
+    "num_options": 4,
+    "seed": 42,
+    "generator_config": {"distance_type": "closest"}
+  },
+  "generation_stats": {
+    "num_tasks_requested": 100,
+    "num_tasks_generated": 100,
+    "output_directory": "./output"
+  }
+}
 ```
 
 ## Future Generators (Based on Layout Relations)
