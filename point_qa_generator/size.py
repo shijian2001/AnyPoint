@@ -30,11 +30,6 @@ class SizeGenerator(BasePointQAGenerator):
 class WhatSizeGenerator(SizeGenerator):
     """Generator for 'What is the (largest/smallest) object in the scene?' questions."""
 
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        """Count possible task combinations."""
-        self.validate_generator_config(task_plan.generator_config)
-        return len(self.layouts) * 2 if self.layouts else 500
-
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         """Generate what-size tasks using layout system."""
         self.validate_generator_config(task_plan.generator_config)
@@ -92,7 +87,7 @@ class WhatSizeGenerator(SizeGenerator):
                         additional = self.rng.choice(available, size=min(num_to_add, len(available)), replace=False)
                         scene_candidates.extend(additional)
                 
-                options, answer_id = self._compose_options(
+                options = self._compose_options(
                     correct_answer, scene_candidates, task_plan.num_options
                 )
                 
@@ -101,7 +96,18 @@ class WhatSizeGenerator(SizeGenerator):
                     question=question,
                     options=options,
                     answer=correct_answer,
-                    answer_id=answer_id
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
                 )
                 
                 tasks.append((task, point_cloud))
@@ -112,11 +118,6 @@ class WhatSizeGenerator(SizeGenerator):
 
 class ListAttributeSizeGenerator(SizeGenerator):
     """Generator for 'List all {attribute}s in the components of the (largest/smallest) object in the scene?' questions."""
-
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        """Count possible task combinations."""
-        self.validate_generator_config(task_plan.generator_config)
-        return len(self.layouts) * 4 * 2 if self.layouts else 800
 
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         """Generate list-attribute-size tasks using layout system."""
@@ -180,7 +181,7 @@ class ListAttributeSizeGenerator(SizeGenerator):
                 if len(candidates) < task_plan.num_options - 1:
                     continue
                 
-                options, answer_id = self._compose_options(
+                options = self._compose_options(
                     correct_answer, list(candidates), task_plan.num_options
                 )
 
@@ -189,7 +190,18 @@ class ListAttributeSizeGenerator(SizeGenerator):
                     question=question,
                     options=options,
                     answer=correct_answer,
-                    answer_id=answer_id
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
                 )
 
                 tasks.append((task, point_cloud))
@@ -200,11 +212,6 @@ class ListAttributeSizeGenerator(SizeGenerator):
 
 class CountAttributeSizeGenerator(SizeGenerator):
     """Generator for 'How many {attribute}s in the components of the (largest/smallest) object in the scene?' questions."""
-
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        """Count possible task combinations."""
-        self.validate_generator_config(task_plan.generator_config)
-        return len(self.layouts) * 4 * 2 if self.layouts else 800
 
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         """Generate count-attribute-size tasks using layout system."""
@@ -269,7 +276,7 @@ class CountAttributeSizeGenerator(SizeGenerator):
                         used.add(correct_count - offset)
                     offset += 1
                 
-                options, answer_id = self._compose_options(
+                options = self._compose_options(
                     correct_answer, candidates, task_plan.num_options
                 )
                 
@@ -278,7 +285,18 @@ class CountAttributeSizeGenerator(SizeGenerator):
                     question=question,
                     options=options,
                     answer=correct_answer,
-                    answer_id=answer_id
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
                 )
                 
                 tasks.append((task, point_cloud))
@@ -301,11 +319,6 @@ class WhereSizeGenerator(SizeGenerator):
     def _get_reference_mode(self, task_plan: TaskPlan) -> str:
         """Get reference mode, default to 'with_reference'."""
         return task_plan.generator_config.get('reference_mode', 'with_reference')
-
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        """Count possible task combinations."""
-        self.validate_generator_config(task_plan.generator_config)
-        return len(self.layouts) * 10 if self.layouts else 1000
 
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         """Generate where-size tasks using layout system."""
@@ -372,14 +385,25 @@ class WhereSizeGenerator(SizeGenerator):
                 # Candidates from VALID_RELATIONS
                 candidates = [rel for rel in VALID_RELATIONS if rel != correct_answer]
                 
-                options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                options = self._compose_options(correct_answer, candidates, task_plan.num_options)
                 
                 task = Task(
                     point=f"{len(tasks):06d}.npy",
                     question=question,
                     options=options,
                     answer=correct_answer,
-                    answer_id=answer_id
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
                 )
                 
                 tasks.append((task, point_cloud))

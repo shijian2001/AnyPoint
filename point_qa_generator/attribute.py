@@ -22,22 +22,8 @@ class AttributeGenerator(BasePointQAGenerator):
 class WhatAttributeGenerator(AttributeGenerator):
     """Generator for 'What is the {attribute} of the {component} in the {object}?' questions."""
 
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        """Count possible task combinations."""
-        count = 0
-        for attribute in ATTRIBUTES:
-            valid_objects = self._get_valid_objects_for_attribute(attribute)
-            for obj in valid_objects:
-                components_with_attr = self.metadata.get_object_components_with_attribute(obj, attribute)
-                count += len(components_with_attr)
-        return count
-
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         """Generate what-attribute tasks."""
-        possible_tasks = self.count_possible_tasks(task_plan)
-        if num_tasks > possible_tasks:
-            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
-
         tasks = []
         seen_combinations = set()
 
@@ -86,14 +72,25 @@ class WhatAttributeGenerator(AttributeGenerator):
                 all_values = self.metadata.get_attribute_values(attribute)
                 candidates = [v for v in all_values if v != correct_answer]
 
-                options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                options = self._compose_options(correct_answer, candidates, task_plan.num_options)
 
                 task = Task(
                     point=f"{len(tasks):06d}.npy",
                     question=question,
                     options=options,
                     answer=correct_answer,
-                    answer_id=answer_id
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
                 )
 
                 tasks.append((task, point_cloud))
@@ -104,14 +101,6 @@ class WhatAttributeGenerator(AttributeGenerator):
 
 class ListAttributeGenerator(AttributeGenerator):
     """Generator for 'List all {attribute}s in the components of the {object}.' questions."""
-
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        """Count possible task combinations."""
-        count = 0
-        for attribute in ATTRIBUTES:
-            valid_objects = self._get_valid_objects_for_attribute(attribute)
-            count += len(valid_objects)
-        return count
 
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         """Generate list-attribute tasks."""
@@ -190,14 +179,25 @@ class ListAttributeGenerator(AttributeGenerator):
 
                 candidates = list(candidates)
 
-                options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                options = self._compose_options(correct_answer, candidates, task_plan.num_options)
 
                 task = Task(
                     point=f"{len(tasks):06d}.npy",
                     question=question,
                     options=options,
                     answer=correct_answer,
-                    answer_id=answer_id
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
                 )
 
                 tasks.append((task, point_cloud))
@@ -208,14 +208,6 @@ class ListAttributeGenerator(AttributeGenerator):
 
 class CountAttributeGenerator(AttributeGenerator):
     """Generator for 'How many {attribute}s are in the components of the {object}?' questions."""
-
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        """Count possible task combinations."""
-        count = 0
-        for attribute in ATTRIBUTES:
-            valid_objects = self._get_valid_objects_for_attribute(attribute)
-            count += len(valid_objects)
-        return count
 
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         """Generate count-attribute tasks."""
@@ -292,14 +284,25 @@ class CountAttributeGenerator(AttributeGenerator):
                     
                     offset += 1
 
-                options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                options = self._compose_options(correct_answer, candidates, task_plan.num_options)
 
                 task = Task(
                     point=f"{len(tasks):06d}.npy",
                     question=question,
                     options=options,
                     answer=correct_answer,
-                    answer_id=answer_id
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
                 )
 
                 tasks.append((task, point_cloud))

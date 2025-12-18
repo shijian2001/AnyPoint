@@ -24,9 +24,9 @@ class Task:
     """Generated task data structure."""
     point: str  # Point cloud filename
     question: str
-    options: List[str]  # ["A. option1", "B. option2", ...]
+    options: List[str]  # ["option1", "option2", ...] (shuffled)
     answer: str  # The correct answer content
-    answer_id: str  # The correct answer ID (A/B/C/...)
+    metadata: Optional[Dict[str, Any]] = None  # Scene metadata (layout, objects)
 
 
 class BasePointQAGenerator(ABC):
@@ -51,11 +51,6 @@ class BasePointQAGenerator(ABC):
     @abstractmethod
     def validate_generator_config(self, config: Dict[str, Any]) -> None:
         """Validate generator-specific configuration."""
-        pass
-
-    @abstractmethod
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        """Count total number of possible tasks for given task plan."""
         pass
 
     @abstractmethod
@@ -163,8 +158,8 @@ class BasePointQAGenerator(ABC):
         correct_answer: str, 
         candidates: List[str],
         num_options: int
-    ) -> Tuple[List[str], str]:
-        """Compose multiple choice options and determine answer ID.
+    ) -> List[str]:
+        """Compose shuffled multiple choice options.
         
         Args:
             correct_answer: The correct answer string
@@ -172,23 +167,13 @@ class BasePointQAGenerator(ABC):
             num_options: Total number of options to generate
             
         Returns:
-            Tuple of (formatted_options, answer_id)
+            Shuffled list of options (correct answer at random position)
         """
         num_distractors = num_options - 1
         distractors = self.rng.choice(candidates, size=num_distractors, replace=False).tolist()
         
+        # Combine and shuffle all options
         all_options = [correct_answer] + distractors
-        option_labels = ['A', 'B', 'C', 'D', 'E', 'F'][:num_options]
+        self.rng.shuffle(all_options)
         
-        # Shuffle and determine answer position
-        indices = list(range(num_options))
-        self.rng.shuffle(indices)
-        answer_id = option_labels[indices.index(0)]
-        
-        # Format options
-        formatted_options = [
-            f"{option_labels[i]}. {all_options[indices[i]]}"
-            for i in range(num_options)
-        ]
-        
-        return formatted_options, answer_id
+        return all_options

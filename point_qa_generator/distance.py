@@ -37,12 +37,6 @@ class WhatDistanceGenerator(DistanceGenerator):
             else:
                 raise ValueError("No layouts with 3-9 objects available for WhatDistanceGenerator")
 
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        """Count possible task combinations."""
-        self.validate_generator_config(task_plan.generator_config)
-        # Approximate: num_layouts * avg_objects_per_layout * (avg_objects - 1)
-        return len(self.layouts) * 5 * 4 if self.layouts else 1000
-
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         """Generate what-distance tasks using layout system."""
         self.validate_generator_config(task_plan.generator_config)
@@ -118,7 +112,7 @@ class WhatDistanceGenerator(DistanceGenerator):
                 if len(scene_candidates) < num_needed:
                     continue
                 
-                options, answer_id = self._compose_options(
+                options = self._compose_options(
                     correct_answer, scene_candidates, task_plan.num_options
                 )
                 
@@ -127,7 +121,18 @@ class WhatDistanceGenerator(DistanceGenerator):
                     question=question,
                     options=options,
                     answer=correct_answer,
-                    answer_id=answer_id
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
                 )
                 
                 tasks.append((task, point_cloud))
@@ -138,11 +143,6 @@ class WhatDistanceGenerator(DistanceGenerator):
 
 class WhereDistanceGenerator(DistanceGenerator):
     """Generator for 'Where is the object that is closest/farthest from the {reference_object}?' questions."""
-
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        """Count possible task combinations."""
-        self.validate_generator_config(task_plan.generator_config)
-        return len(self.layouts) * 5 * 4 if self.layouts else 1000
 
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         """Generate where-distance tasks using layout system."""
@@ -205,7 +205,7 @@ class WhereDistanceGenerator(DistanceGenerator):
                 # Candidates from VALID_RELATIONS
                 candidates = [rel for rel in VALID_RELATIONS if rel != correct_answer]
                 
-                options, answer_id = self._compose_options(
+                options = self._compose_options(
                     correct_answer, candidates, task_plan.num_options
                 )
                 
@@ -214,7 +214,18 @@ class WhereDistanceGenerator(DistanceGenerator):
                     question=question,
                     options=options,
                     answer=correct_answer,
-                    answer_id=answer_id
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
                 )
                 
                 tasks.append((task, point_cloud))
@@ -225,11 +236,6 @@ class WhereDistanceGenerator(DistanceGenerator):
 
 class ListAttributeDistanceGenerator(DistanceGenerator):
     """Generator for 'List all {attribute}s in the components of the object closest/farthest from {reference_object}.' questions."""
-
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        """Count possible task combinations."""
-        self.validate_generator_config(task_plan.generator_config)
-        return len(self.layouts) * 4 * 4 if self.layouts else 800  # 4 attributes
 
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         """Generate list-attribute-distance tasks using layout system."""
@@ -306,7 +312,7 @@ class ListAttributeDistanceGenerator(DistanceGenerator):
                 if len(candidates) < task_plan.num_options - 1:
                     continue
                 
-                options, answer_id = self._compose_options(
+                options = self._compose_options(
                     correct_answer, list(candidates), task_plan.num_options
                 )
                 
@@ -315,7 +321,18 @@ class ListAttributeDistanceGenerator(DistanceGenerator):
                     question=question,
                     options=options,
                     answer=correct_answer,
-                    answer_id=answer_id
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
                 )
                 
                 tasks.append((task, point_cloud))
@@ -327,19 +344,10 @@ class ListAttributeDistanceGenerator(DistanceGenerator):
 class CountAttributeDistanceGenerator(DistanceGenerator):
     """Generator for 'How many {attribute}s in the components of the object closest/farthest from {reference_object}?' questions."""
 
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        """Count possible task combinations."""
-        self.validate_generator_config(task_plan.generator_config)
-        return len(self.layouts) * 4 * 4 if self.layouts else 800
-
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         """Generate count-attribute-distance tasks."""
         self.validate_generator_config(task_plan.generator_config)
         distance_type = self._get_distance_type(task_plan)
-
-        possible_tasks = self.count_possible_tasks(task_plan)
-        if num_tasks > possible_tasks:
-            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
 
         tasks = []
         seen_combinations = set()
@@ -415,14 +423,25 @@ class CountAttributeDistanceGenerator(DistanceGenerator):
                         used.add(correct_count - offset)
                     offset += 1
                 
-                options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                options = self._compose_options(correct_answer, candidates, task_plan.num_options)
 
                 task = Task(
                     point=f"{len(tasks):06d}.npy",
                     question=question,
                     options=options,
                     answer=correct_answer,
-                    answer_id=answer_id
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
                 )
 
                 tasks.append((task, point_cloud))

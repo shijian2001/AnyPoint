@@ -206,10 +206,6 @@ class PointQAGenerator:
             raise ValueError(f"Unknown generator type: {task_plan.generator_type}")
 
         generator = self.generators[task_plan.generator_type]
-        possible_tasks = generator.count_possible_tasks(task_plan)
-
-        if num_tasks > possible_tasks:
-            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
 
         os.makedirs(output_dir, exist_ok=True)
         pcd_dir = os.path.join(output_dir, "pcd")
@@ -218,9 +214,34 @@ class PointQAGenerator:
         task_results = generator.generate_tasks(task_plan, num_tasks)
 
         task_records = []
+        all_scene_metadata = []
+        
         for i, (task, point_cloud) in enumerate(task_results):
             pcd_path = os.path.join(pcd_dir, task.point)
             np.save(pcd_path, point_cloud)
+
+            # Collect scene metadata
+            if task.metadata:
+                # Fill placeholders in layout description
+                layout_template = task.metadata.get("layout_description", "")
+                layout_description = layout_template
+                for obj_info in task.metadata.get("objects", []):
+                    placeholder = "[" + obj_info["placeholder"] + "]"
+                    obj_name = obj_info["name"]
+                    layout_description = layout_description.replace(placeholder, obj_name)
+                
+                scene_metadata = {
+                    "scene_id": i,
+                    "point_cloud": task.point,
+                    "layout_id": task.metadata.get("layout_id"),
+                    "layout_template": layout_template,
+                    "layout_description": layout_description,
+                    "objects": {
+                        "count": len(task.metadata.get("objects", [])),
+                        "details": task.metadata.get("objects", [])
+                    }
+                }
+                all_scene_metadata.append(scene_metadata)
 
             task_record = {
                 "question_id": i,
@@ -228,10 +249,15 @@ class PointQAGenerator:
                 "category": f"{task_plan.generator_type}_{task_plan.generator_config.get('distance_type', '')}",
                 "question": task.question,
                 "options": task.options,
-                "answer": task.answer,
-                "answer_id": task.answer_id
+                "answer": task.answer
             }
             task_records.append(task_record)
+
+        # Save all scene metadata to single file
+        if all_scene_metadata:
+            metadata_file = os.path.join(pcd_dir, "metadata.json")
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(all_scene_metadata, f, indent=2, ensure_ascii=False)
 
         tasks_file = os.path.join(output_dir, "tasks.jsonl")
         with open(tasks_file, 'w', encoding='utf-8') as f:
@@ -248,7 +274,6 @@ class PointQAGenerator:
             "generation_stats": {
                 "num_tasks_requested": num_tasks,
                 "num_tasks_generated": len(task_records),
-                "possible_tasks": possible_tasks,
                 "output_directory": output_dir
             }
         }

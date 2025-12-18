@@ -82,14 +82,7 @@ class NumberGenerator(BasePointQAGenerator):
 class CountObjectGenerator(NumberGenerator):
     """Generator for 'How many {object} in the scene?' questions."""
 
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        return len(self.metadata.objects) * 50
-
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
-        possible_tasks = self.count_possible_tasks(task_plan)
-        if num_tasks > possible_tasks:
-            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
-
         tasks = []
         seen_combinations = set()
 
@@ -129,15 +122,26 @@ class CountObjectGenerator(NumberGenerator):
                             candidates.add(str(candidate_count))
                     
                     candidates = list(candidates)
-                    options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                    options = self._compose_options(correct_answer, candidates, task_plan.num_options)
                     
                     task = Task(
                         point=f"{len(tasks):06d}.npy",
                         question=question,
                         options=options,
                         answer=correct_answer,
-                        answer_id=answer_id
-                    )
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
+                )
                     
                     tasks.append((task, point_cloud))
                     pbar.update(1)
@@ -151,17 +155,9 @@ class CountObjectGenerator(NumberGenerator):
 class FrequentObjectGenerator(NumberGenerator):
     """Generator for 'What is the (least/most) frequent object in the scene?' questions."""
 
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        self.validate_generator_config(task_plan.generator_config)
-        return len(self.metadata.objects) * 30
-
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         self.validate_generator_config(task_plan.generator_config)
         frequency_type = self._get_frequency_type(task_plan)
-        
-        possible_tasks = self.count_possible_tasks(task_plan)
-        if num_tasks > possible_tasks:
-            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
 
         tasks = []
         seen_combinations = set()
@@ -214,15 +210,26 @@ class FrequentObjectGenerator(NumberGenerator):
                         
                         candidates = list(set(scene_object_names_wo_answer + random_object_names))
                     
-                    options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                    options = self._compose_options(correct_answer, candidates, task_plan.num_options)
                     
                     task = Task(
                         point=f"{len(tasks):06d}.npy",
                         question=question,
                         options=options,
                         answer=correct_answer,
-                        answer_id=answer_id
-                    )
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
+                )
                     
                     tasks.append((task, point_cloud))
                     pbar.update(1)
@@ -236,25 +243,9 @@ class FrequentObjectGenerator(NumberGenerator):
 class ListAttributeFrequentGenerator(NumberGenerator):
     """Generator for 'List all {attribute}s in the components of the (least/most) frequent object in the scene?' questions."""
 
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        self.validate_generator_config(task_plan.generator_config)
-        
-        valid_targets = 0
-        for obj in self.metadata.objects:
-            for attribute in ATTRIBUTES:
-                if self.metadata.has_components_with_attribute(obj, attribute):
-                    valid_targets += 1
-                    break
-        
-        return valid_targets * 4 * 20
-
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         self.validate_generator_config(task_plan.generator_config)
         frequency_type = self._get_frequency_type(task_plan)
-        
-        possible_tasks = self.count_possible_tasks(task_plan)
-        if num_tasks > possible_tasks:
-            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
 
         tasks = []
         seen_combinations = set()
@@ -340,15 +331,26 @@ class ListAttributeFrequentGenerator(NumberGenerator):
                                 break
                     
                     candidates = list(candidates)
-                    options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                    options = self._compose_options(correct_answer, candidates, task_plan.num_options)
                     
                     task = Task(
                         point=f"{len(tasks):06d}.npy",
                         question=question,
                         options=options,
                         answer=correct_answer,
-                        answer_id=answer_id
-                    )
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
+                )
                     
                     tasks.append((task, point_cloud))
                     pbar.update(1)
@@ -362,25 +364,9 @@ class ListAttributeFrequentGenerator(NumberGenerator):
 class CountAttributeFrequentGenerator(NumberGenerator):
     """Generator for 'How many {attribute}s in the components of (least/most) frequent object in the scene?' questions."""
 
-    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
-        self.validate_generator_config(task_plan.generator_config)
-        
-        valid_targets = 0
-        for obj in self.metadata.objects:
-            for attribute in ATTRIBUTES:
-                if self.metadata.has_components_with_attribute(obj, attribute):
-                    valid_targets += 1
-                    break
-        
-        return valid_targets * 4 * 20
-
     def generate_tasks(self, task_plan: TaskPlan, num_tasks: int) -> List[Tuple[Task, np.ndarray]]:
         self.validate_generator_config(task_plan.generator_config)
         frequency_type = self._get_frequency_type(task_plan)
-        
-        possible_tasks = self.count_possible_tasks(task_plan)
-        if num_tasks > possible_tasks:
-            raise ValueError(f"Requested {num_tasks} tasks but only {possible_tasks} possible")
 
         tasks = []
         seen_combinations = set()
@@ -472,15 +458,26 @@ class CountAttributeFrequentGenerator(NumberGenerator):
                             offset += 1
                     
                     candidates = list(candidates)
-                    options, answer_id = self._compose_options(correct_answer, candidates, task_plan.num_options)
+                    options = self._compose_options(correct_answer, candidates, task_plan.num_options)
                     
                     task = Task(
                         point=f"{len(tasks):06d}.npy",
                         question=question,
                         options=options,
                         answer=correct_answer,
-                        answer_id=answer_id
-                    )
+                    metadata={
+                        "layout_id": layout.get("id"),
+                        "layout_description": layout.get("description"),
+                        "objects": [
+                            {
+                                "name": actual_obj["object_name"],
+                                "object_id": actual_obj["object_id"],
+                                "placeholder": placeholder
+                            }
+                            for placeholder, actual_obj in object_mapping.items()
+                        ]
+                    }
+                )
                     
                     tasks.append((task, point_cloud))
                     pbar.update(1)
