@@ -97,6 +97,8 @@ class WhatSizeGenerator(SizeGenerator):
                     options=options,
                     answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [
@@ -191,6 +193,8 @@ class ListAttributeSizeGenerator(SizeGenerator):
                     options=options,
                     answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [
@@ -286,6 +290,8 @@ class CountAttributeSizeGenerator(SizeGenerator):
                     options=options,
                     answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [
@@ -393,6 +399,8 @@ class WhereSizeGenerator(SizeGenerator):
                     options=options,
                     answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [

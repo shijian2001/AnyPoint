@@ -9,3 +9,5 @@ pyyaml
 torch
 torchvision
 qwen_vl_utils
+sentence-transformers
+diskcache

@@ -122,6 +122,8 @@ class WhatDistanceGenerator(DistanceGenerator):
                     options=options,
                     answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [
@@ -215,6 +217,8 @@ class WhereDistanceGenerator(DistanceGenerator):
                     options=options,
                     answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [
@@ -322,6 +326,8 @@ class ListAttributeDistanceGenerator(DistanceGenerator):
                     options=options,
                     answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [
@@ -431,6 +437,8 @@ class CountAttributeDistanceGenerator(DistanceGenerator):
                     options=options,
                     answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [

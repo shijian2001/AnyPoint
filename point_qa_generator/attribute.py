@@ -80,6 +80,8 @@ class WhatAttributeGenerator(AttributeGenerator):
                     options=options,
                     answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [
@@ -187,6 +189,8 @@ class ListAttributeGenerator(AttributeGenerator):
                     options=options,
                     answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [
@@ -292,6 +296,8 @@ class CountAttributeGenerator(AttributeGenerator):
                     options=options,
                     answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [

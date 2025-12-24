@@ -4,7 +4,7 @@ from visualizer import PointCloudVisualizer, ColorScheme
 # points = np.random.randn(1000, 3)
 
 viz = PointCloudVisualizer()
-viz.add_point_cloud("/Users/wangshijian/dev/AnyPoint/data/test/test_npy/0aac84fb3bb74297b133c1a087b6be0a.npy", "My Cloud")
+viz.add_point_cloud("./output_test/where_distance_closest/pcd/000002.npy", "My Cloud")
 viz.visualize(ColorScheme.ORIGINAL)
 
 

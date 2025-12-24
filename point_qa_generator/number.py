@@ -130,6 +130,8 @@ class CountObjectGenerator(NumberGenerator):
                         options=options,
                         answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [
@@ -218,6 +220,8 @@ class FrequentObjectGenerator(NumberGenerator):
                         options=options,
                         answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [
@@ -339,6 +343,8 @@ class ListAttributeFrequentGenerator(NumberGenerator):
                         options=options,
                         answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [
@@ -466,6 +472,8 @@ class CountAttributeFrequentGenerator(NumberGenerator):
                         options=options,
                         answer=correct_answer,
                     metadata={
+                        "generator_type": task_plan.generator_type,
+                        "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
                         "layout_description": layout.get("description"),
                         "objects": [
