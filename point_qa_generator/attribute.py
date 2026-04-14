@@ -18,6 +18,13 @@ class AttributeGenerator(BasePointQAGenerator):
         return [obj for obj in self.metadata.objects
                 if self.metadata.has_components_with_attribute(obj, attribute)]
 
+    def count_possible_tasks(self, task_plan: TaskPlan) -> int:
+        """Count unique (object, attribute) pairs available for generation."""
+        count = 0
+        for attribute in ATTRIBUTES:
+            count += len(self._get_valid_objects_for_attribute(attribute))
+        return count
+
 
 class WhatAttributeGenerator(AttributeGenerator):
     """Generator for 'What is the {attribute} of the {component} in the {object}?' questions."""

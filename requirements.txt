@@ -11,3 +11,7 @@ torchvision
 qwen_vl_utils
 sentence-transformers
 diskcache
+easydict
+timm
+termcolor
+tiktoken

@@ -16,6 +16,21 @@ from .utility import UtilityCalculator
 from .task_pool import TaskPool
 
 
+def _to_jsonable(value: Any) -> Any:
+    """Recursively convert numpy values to native Python types."""
+    if isinstance(value, dict):
+        return {key: _to_jsonable(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, tuple):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
 class DynamicEvaluator:
     """
     Dynamic evaluation with utility-driven sampling.
@@ -217,6 +232,7 @@ class DynamicEvaluator:
             },
             'results': [r.to_dict() for r in self.results]
         }
+        summary = _to_jsonable(summary)
         
         path = os.path.join(output_dir, 'results.json')
         with open(path, 'w') as f:
@@ -305,4 +321,3 @@ class DynamicEvaluator:
         print(f"\n{'='*70}")
         print(f"🎉 Complete: {s['total']} evaluated, {s['errors']} errors ({s['error_rate']:.1%})")
         print(f"{'='*70}\n")
-

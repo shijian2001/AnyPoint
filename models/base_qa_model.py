@@ -18,7 +18,7 @@ def load_point_cloud(data):
 		return data.cpu().numpy()
 	if isinstance(data, str) and data.endswith('.npy') and os.path.exists(data):
 		return np.load(data)
-	raise ValueError(f"No support for data type: {type(data)}, value: {data}")
+	raise ValueError(f"无法识别的点云输入类型: {type(data)}, value: {data}")
 
 	
 def make_options(choices, format='letter'):
@@ -68,7 +68,13 @@ class QAModel(Model):
 		self.enable_choice_search = enable_choice_search
 		if enable_choice_search:
 			# use SBERT to find the closest choice
-			self.sentence_transformer = sentence_transformers.SentenceTransformer("all-mpnet-base-v2", device='cpu')
+			model_name = "all-mpnet-base-v2"
+			model_root = os.environ.get("SENTENCE_TRANSFORMERS_HOME")
+			if model_root:
+				local_path = os.path.join(model_root, model_name)
+				if os.path.isdir(local_path):
+					model_name = local_path
+			self.sentence_transformer = sentence_transformers.SentenceTransformer(model_name, device='cpu')
 
 	@torch.no_grad()
 	def choice_search(self, free_form_answer, choices):
@@ -102,7 +108,7 @@ class QAModel(Model):
 	def multiple_choice_qa(self, data, question, choices, answer=None):
 		# Get VQA model's answer
 		prefix1, prefix2, options = make_options(choices, self.format)
-		prompt = self.prompt_func(question, options)
+		prompt = self.prompt_func(question, choices)
 		free_form_answer = self._qa(data, prompt)
 		free_form_answer = free_form_answer.strip()
 
@@ -128,7 +134,7 @@ class QAModel(Model):
 		result = {
 			"free_form_answer"      : free_form_answer,
 			"multiple_choice_answer": multiple_choice_answer,
-			"choices"               : choices.copy(),
+			# "choices"               : choices.copy(),
 		}
 		if answer is not None:
 			result["accuracy"] = int(answer == multiple_choice_answer)
