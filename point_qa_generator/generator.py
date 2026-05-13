@@ -78,7 +78,7 @@ class PointQAGenerator:
             
         Returns:
             Dictionary with classified layouts:
-                - 'standard': Layouts with 2-9 objects (most generators)
+                - 'standard': Layouts with 3-9 objects (most generators)
                 - 'special': Layouts with 3-9 objects (WhatDistance, Number generators)
                 - 'all': All layouts
         """
@@ -91,8 +91,8 @@ class PointQAGenerator:
         for layout in layouts:
             n_objects = len(layout["objects"])
             
-            # Most generators need 2-9 objects
-            if 2 <= n_objects <= 9:
+            # Most generators need 3-9 objects
+            if 3 <= n_objects <= 9:
                 classified['standard'].append(layout)
             
             # Special generators (WhatDistance, Number) need 3-9 objects
@@ -103,7 +103,7 @@ class PointQAGenerator:
         if not classified['special']:
             print("Warning: No layouts with 3-9 objects found. Special generators may fail.")
         if not classified['standard']:
-            raise ValueError("No layouts with at least 2 objects found.")
+            raise ValueError("No layouts with at least 3 objects found.")
         
         return classified
     
@@ -164,7 +164,7 @@ class PointQAGenerator:
         
         Compatibility rules:
         - Attribute-based: At least one object must have components with attributes
-        - Distance/Size-based: At least 2 objects required (guaranteed by layout)
+        - Distance/Size-based: At least 3 objects required (guaranteed by layout)
         - Number-based: Always compatible
         
         Args:
@@ -182,10 +182,9 @@ class PointQAGenerator:
                     return True
             return False
         
-        # Distance/size-based generators need at least 2 objects
-        # (layouts guarantee this, but check for safety)
+        # Distance/size-based generators need at least 3 objects
         if "distance" in generator_type or "size" in generator_type:
-            return len(layout["objects"]) >= 2
+            return len(layout["objects"]) >= 3
         
         # Number-based generators are always compatible
         return True

@@ -31,7 +31,7 @@ VALID_RELATIONS: List[str] = [
 ]
 
 # Scene configuration
-MIN_OBJECTS: int = 2
+MIN_OBJECTS: int = 3
 MAX_OBJECTS: int = 9
 SCENE_BOUNDS: float = 8.0  # Scene bounding box half-size (larger → more success)
 

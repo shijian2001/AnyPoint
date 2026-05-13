@@ -58,7 +58,7 @@ class BasePointQAGenerator(ABC):
         """Generate specified number of tasks."""
         pass
     
-    def _sample_layout_and_map_objects(self, min_objects: int = 2) -> Tuple[Dict, Dict[str, Dict]]:
+    def _sample_layout_and_map_objects(self, min_objects: int = 3) -> Tuple[Dict, Dict[str, Dict]]:
         """Sample a layout and map placeholders to actual objects.
         
         Args:

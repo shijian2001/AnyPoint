@@ -2,17 +2,18 @@
 Layout Generator Module
 
 Generates 3D scene layouts from object lists using LLM-based DSL generation
-and constraint-based position solving.
+and optimization-based position solving.
 
-Design:
-    LLM generates semantic DSL → Abstract to reusable templates → Solver maps to coordinates
+Pipeline:
+    LLM generates spatial DSL → Validator checks quality → Solver optimizes coordinates
+    → Post-verification → Deduplication → Reusable templates
 
 Components:
     - schema: Data structures (DSL, Template, Layout)
-    - constants: Size mappings, spatial relations, constraints
-    - validator: DSL validation and parsing
-    - solver: Constraint solver for position generation
-    - generator: Main layout generation pipeline
+    - constants: Size mappings, spatial relations, scene bounds
+    - validator: DSL validation (structure, quality, diversity)
+    - solver: Two-phase solver (analytical Y + SLSQP XZ)
+    - generator: Main pipeline with quality assurance
 """
 
 from .schema import DSL, ObjectSpec, RelationSpec, Layout, LayoutObject, Template

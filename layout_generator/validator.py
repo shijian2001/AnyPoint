@@ -92,6 +92,41 @@ def validate_description_contains_names(description: str, object_names: Set[str]
     return True, ""
 
 
+def validate_relation_quality(relations: List[dict], num_objects: int) -> Tuple[bool, str]:
+    """Validate that relations have sufficient density and type diversity."""
+    num_relations = len(relations)
+
+    # Minimum relation density: at least (n_objects - 1) relations for connectivity
+    min_relations = num_objects - 1
+    if num_relations < min_relations:
+        return False, (
+            f"Insufficient relations: got {num_relations}, "
+            f"need at least {min_relations} for {num_objects} objects"
+        )
+
+    # Type diversity: must use at least 2 distinct relation categories
+    VERTICAL = {"on", "above", "below", "under"}
+    DIRECTIONAL = {"in front of", "behind", "to the left of", "to the right of"}
+    PROXIMITY = {"beside", "next to", "near", "far from", "surrounding", "at the center of"}
+
+    rel_types = set(r["relation"] for r in relations)
+    categories_used = 0
+    if rel_types & VERTICAL:
+        categories_used += 1
+    if rel_types & DIRECTIONAL:
+        categories_used += 1
+    if rel_types & PROXIMITY:
+        categories_used += 1
+
+    if num_objects >= 4 and categories_used < 2:
+        return False, (
+            f"Insufficient relation diversity: only {categories_used} category used, "
+            f"need at least 2 for {num_objects} objects"
+        )
+
+    return True, ""
+
+
 def validate_dsl_dict(data: dict) -> Tuple[bool, str]:
     """
     Validate a complete DSL dictionary.
@@ -123,6 +158,8 @@ def validate_dsl_dict(data: dict) -> Tuple[bool, str]:
         is_valid, error = validate_object_spec(obj, i)
         if not is_valid:
             return False, error
+        if obj["name"] in object_names:
+            return False, f"Duplicate object name: '{obj['name']}'"
         object_names.add(obj["name"])
 
     # Validate size constraints
@@ -144,6 +181,11 @@ def validate_dsl_dict(data: dict) -> Tuple[bool, str]:
 
     # Validate description contains all object names
     is_valid, error = validate_description_contains_names(description, object_names)
+    if not is_valid:
+        return False, error
+
+    # Quality checks: relation density and diversity
+    is_valid, error = validate_relation_quality(data["relations"], num_objects)
     if not is_valid:
         return False, error
 

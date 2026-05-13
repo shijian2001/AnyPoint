@@ -1,31 +1,34 @@
-"""Layout generator: LLM-based DSL generation with solver-based layout computation."""
+"""Layout generator: LLM-based DSL generation with constraint solving."""
 
 import asyncio
-import json
 import re
 import logging
+import numpy as np
 from typing import List, Optional, Dict, Any, Tuple, Set
 from concurrent.futures import ThreadPoolExecutor
 from .schema import DSL, ObjectSpec, RelationSpec, Layout, Template
 from .validator import parse_dsl, DSLValidationError
 from .api.json_parser import JSONParser
 from .solver import LayoutSolver, SolverError
-from .constants import VALID_SIZES, VALID_RELATIONS, MIN_OBJECTS, MAX_OBJECTS
+from .constants import (
+    VALID_SIZES, VALID_RELATIONS, MIN_OBJECTS, MAX_OBJECTS, RELATION_DIRECTIONS
+)
 from .api import StreamGenerator
 
 logger = logging.getLogger(__name__)
 
-# System prompt for DSL generation
-DSL_SYSTEM_PROMPT = """You are an expert at generating realistic spatial scene layouts for 3D object placement.
+# ─── System Prompt ────────────────────────────────────────────────────────────
 
-Given a list of objects, generate a JSON DSL describing their spatial arrangement in a physically plausible, real-world scene.
+DSL_SYSTEM_PROMPT = """You are an expert at generating spatial scene layouts for 3D object placement.
+
+Given a list of objects, generate a JSON DSL describing their spatial arrangement. Consider each object's real-world semantics (what it is, how it's typically used, what scale it would be) to determine plausible positions and size assignments. The layout should have rich spatial structure — objects at varying distances, distributed across multiple directions, with a mix of vertical stacking and horizontal spread.
 
 ## CRITICAL REQUIREMENTS:
 1. ⚠️ MUST include BOTH 'largest' and 'smallest' size categories (one object each minimum)
 2. ⚠️ All relation references MUST be actual object names from the objects list (NO 'scene', 'ground', 'floor', etc.)
 3. ⚠️ Description MUST mention every object by its EXACT name (not aliases)
 4. ⚠️ Description should ONLY state spatial relationships - NO adjectives or attributes (e.g., "large table" → "table", "wooden chair" → "chair")
-5. ⚠️ Layout must be realistic and follow real-world scene logic
+5. ⚠️ Use diverse spatial relations — combine vertical (on/above), directional (in front of/behind/left/right), and proximity (near/far/beside) relations rather than relying on a single relation type
 
 ## JSON FORMAT:
 ```json
@@ -43,7 +46,7 @@ Given a list of objects, generate a JSON DSL describing their spatial arrangemen
 ## VALID SIZE CATEGORIES:
 - largest (REQUIRED - assign to one object)
 - large
-- medium  
+- medium
 - small
 - smallest (REQUIRED - assign to one object)
 
@@ -52,18 +55,15 @@ Given a list of objects, generate a JSON DSL describing their spatial arrangemen
 - Vertical: "on", "above", "below", "under"
 - Other: "surrounding", "at the center of"
 
-## REALISTIC SCENE CONSTRAINTS:
-- **Physical stability**: Objects must have stable support (e.g., items "on" tables, not floating)
-- **Size logic**: Smaller objects typically "on" or "near" larger ones; larger objects rarely "on" smaller ones
-- **Functional relationships**: Objects should be arranged as they would in real scenes (e.g., lamp on desk, cup on table, books on shelf)
-- **Spatial coherence**: Related objects should be grouped (e.g., dining items together, work items together)
-- **Gravity compliance**: Vertical relations must respect gravity (heavy items below, light items above)
-- **Accessibility**: Objects should be reachable and usable in the arrangement
-- **Rotation realism**: Rotation should match typical object orientations (0° for most furniture)
+## LAYOUT GUIDELINES:
+- **Semantic awareness**: Consider what each object is and assign sizes/positions that reflect real-world proportions (e.g., a building is larger than a cup; a coin sits on a table, not vice versa)
+- **Physical plausibility**: Vertical stacking must respect gravity — heavier/larger objects support lighter/smaller ones
+- **Spatial richness**: Distribute objects across the scene — some near, some far; some stacked vertically, some spread horizontally; some in front, some behind
+- **Relation diversity**: Each layout should use multiple relation types (not just "on" for everything, or just "beside" for everything)
 
-## EXAMPLES:
+## EXAMPLES (showing diverse layout patterns):
 
-### Example 1: ["table", "lamp", "book"]
+### Example 1 (surface stacking): ["table", "lamp", "book"]
 ```json
 {
   "description": "The table is positioned at the center. The lamp is on the table. The book is on the table beside the lamp.",
@@ -80,89 +80,92 @@ Given a list of objects, generate a JSON DSL describing their spatial arrangemen
 }
 ```
 
-### Example 2: ["sofa", "coffee_table", "vase", "remote"]
+### Example 2 (linear chain): ["bookshelf", "desk", "chair", "lamp"]
 ```json
 {
-  "description": "The sofa is positioned at the center. The coffee_table is in front of the sofa. The vase is on the coffee_table. The remote is on the coffee_table beside the vase.",
+  "description": "The bookshelf is behind the desk. The desk is behind the chair. The lamp is on the desk.",
   "objects": [
-    {"name": "sofa", "size": "largest", "rotation": 0},
-    {"name": "coffee_table", "size": "large", "rotation": 0},
-    {"name": "vase", "size": "small", "rotation": 0},
-    {"name": "remote", "size": "smallest", "rotation": 30}
+    {"name": "bookshelf", "size": "largest", "rotation": 0},
+    {"name": "desk", "size": "large", "rotation": 0},
+    {"name": "chair", "size": "medium", "rotation": 0},
+    {"name": "lamp", "size": "smallest", "rotation": 0}
   ],
   "relations": [
-    {"subject": "coffee_table", "relation": "in front of", "reference": "sofa"},
-    {"subject": "vase", "relation": "on", "reference": "coffee_table"},
-    {"subject": "remote", "relation": "on", "reference": "coffee_table"},
-    {"subject": "remote", "relation": "beside", "reference": "vase"}
+    {"subject": "desk", "relation": "in front of", "reference": "bookshelf"},
+    {"subject": "chair", "relation": "in front of", "reference": "desk"},
+    {"subject": "lamp", "relation": "on", "reference": "desk"}
   ]
 }
 ```
 
-### Example 3: ["desk", "monitor", "keyboard", "mouse", "pen"]
+### Example 3 (distributed cluster): ["tree", "bench", "fountain", "statue", "bird"]
 ```json
 {
-  "description": "The desk is at the center. The monitor is on the desk. The keyboard is on the desk in front of the monitor. The mouse is on the desk to the right of the keyboard. The pen is on the desk beside the keyboard.",
+  "description": "The fountain is at the center of the tree. The bench is to the left of the fountain. The statue is to the right of the fountain. The bird is on the statue.",
   "objects": [
-    {"name": "desk", "size": "largest", "rotation": 0},
-    {"name": "monitor", "size": "large", "rotation": 0},
-    {"name": "keyboard", "size": "medium", "rotation": 0},
-    {"name": "mouse", "size": "small", "rotation": 0},
-    {"name": "pen", "size": "smallest", "rotation": 45}
+    {"name": "tree", "size": "largest", "rotation": 0},
+    {"name": "fountain", "size": "large", "rotation": 0},
+    {"name": "bench", "size": "medium", "rotation": 0},
+    {"name": "statue", "size": "small", "rotation": 0},
+    {"name": "bird", "size": "smallest", "rotation": 15}
   ],
   "relations": [
-    {"subject": "monitor", "relation": "on", "reference": "desk"},
-    {"subject": "keyboard", "relation": "on", "reference": "desk"},
-    {"subject": "keyboard", "relation": "in front of", "reference": "monitor"},
-    {"subject": "mouse", "relation": "on", "reference": "desk"},
-    {"subject": "mouse", "relation": "to the right of", "reference": "keyboard"},
-    {"subject": "pen", "relation": "on", "reference": "desk"},
-    {"subject": "pen", "relation": "beside", "reference": "keyboard"}
+    {"subject": "fountain", "relation": "at the center of", "reference": "tree"},
+    {"subject": "bench", "relation": "to the left of", "reference": "fountain"},
+    {"subject": "statue", "relation": "to the right of", "reference": "fountain"},
+    {"subject": "bird", "relation": "on", "reference": "statue"}
   ]
 }
 ```
 
-Now generate a realistic, physically plausible spatial arrangement that follows real-world scene logic. Focus purely on spatial relationships without any descriptive adjectives."""
+### Example 4 (multi-level): ["floor", "cabinet", "tv", "speaker", "remote", "plant"]
+```json
+{
+  "description": "The cabinet is on the floor. The tv is on the cabinet. The speaker is beside the cabinet. The remote is in front of the cabinet. The plant is far from the cabinet.",
+  "objects": [
+    {"name": "floor", "size": "largest", "rotation": 0},
+    {"name": "cabinet", "size": "large", "rotation": 0},
+    {"name": "tv", "size": "medium", "rotation": 0},
+    {"name": "speaker", "size": "small", "rotation": 0},
+    {"name": "remote", "size": "smallest", "rotation": 0},
+    {"name": "plant", "size": "medium", "rotation": 0}
+  ],
+  "relations": [
+    {"subject": "cabinet", "relation": "on", "reference": "floor"},
+    {"subject": "tv", "relation": "on", "reference": "cabinet"},
+    {"subject": "speaker", "relation": "beside", "reference": "cabinet"},
+    {"subject": "remote", "relation": "in front of", "reference": "cabinet"},
+    {"subject": "plant", "relation": "far from", "reference": "cabinet"}
+  ]
+}
+```
 
+Generate a spatial arrangement that fits the given objects naturally. Use diverse layout patterns — not always centered placement. Consider the objects' real-world semantics to choose appropriate spatial structures."""
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _create_user_prompt(object_names: List[str]) -> str:
-    """Create user prompt for DSL generation."""
     names_str = ", ".join(f'"{name}"' for name in object_names)
     return f"Generate a spatial scene DSL for these objects: [{names_str}]"
 
 
 def _abstract_to_template(dsl: DSL, template_id: int) -> Template:
-    """
-    Abstract DSL to reusable template by replacing object names with placeholders.
-
-    Args:
-        dsl: Validated DSL object
-        template_id: Unique template identifier
-
-    Returns:
-        Template with placeholder names
-    """
-    # Create name mapping: original -> placeholder
+    """Abstract DSL to reusable template by replacing object names with placeholders."""
     name_mapping = {obj.name: f"obj_{i}" for i, obj in enumerate(dsl.objects)}
 
-    # Transform description: replace names with placeholders in brackets
     description = dsl.description
-    for original, placeholder in name_mapping.items():
-        # Replace exact matches, handling word boundaries
-        pattern = r'\b' + re.escape(original) + r'\b'
-        description = re.sub(pattern, f"[{placeholder}]", description, flags=re.IGNORECASE)
+    # Replace longest names first to avoid partial matches (e.g. "table lamp" before "table")
+    for original in sorted(name_mapping.keys(), key=len, reverse=True):
+        placeholder = name_mapping[original]
+        description = description.replace(original, f"[{placeholder}]")
+        description = description.replace(original.capitalize(), f"[{placeholder}]")
+        description = description.replace(original.title(), f"[{placeholder}]")
 
-    # Transform objects
     template_objects = [
-        ObjectSpec(
-            name=name_mapping[obj.name],
-            size=obj.size,
-            rotation=obj.rotation
-        )
+        ObjectSpec(name=name_mapping[obj.name], size=obj.size, rotation=obj.rotation)
         for obj in dsl.objects
     ]
-
-    # Transform relations
     template_relations = [
         RelationSpec(
             subject=name_mapping[rel.subject],
@@ -173,16 +176,12 @@ def _abstract_to_template(dsl: DSL, template_id: int) -> Template:
     ]
 
     return Template(
-        id=template_id,
-        count=len(dsl.objects),
-        description=description,
-        objects=template_objects,
-        relations=template_relations
+        id=template_id, count=len(dsl.objects),
+        description=description, objects=template_objects, relations=template_relations
     )
 
 
 def _template_to_dsl(template: Template) -> DSL:
-    """Convert template back to DSL for solving."""
     return DSL(
         description=template.description,
         objects=template.objects.copy(),
@@ -192,13 +191,46 @@ def _template_to_dsl(template: Template) -> DSL:
     )
 
 
+def _structure_key(template: Template) -> tuple:
+    """Compute a hashable key representing the full structure (topology + sizes)."""
+    relations_key = tuple(
+        (r.subject, r.relation, r.reference)
+        for r in sorted(template.relations, key=lambda r: (r.subject, r.relation, r.reference))
+    )
+    sizes_key = tuple((o.name, o.size) for o in template.objects)
+    return (relations_key, sizes_key)
+
+
+def _verify_directional_relations(layout: Layout) -> bool:
+    """Verify all directional relations hold in solved coordinates."""
+    idx = {o.name: o for o in layout.objects}
+    for rel in layout.relations:
+        if rel.relation in RELATION_DIRECTIONS:
+            subj, ref = idx[rel.subject], idx[rel.reference]
+            dx_d, dz_d = RELATION_DIRECTIONS[rel.relation]
+            proj = (subj.position[0] - ref.position[0]) * dx_d + \
+                   (subj.position[2] - ref.position[2]) * dz_d
+            if proj <= 0:
+                return False
+    return True
+
+
+# ─── Main Generator ──────────────────────────────────────────────────────────
+
 class LayoutGenerator:
     """
-    Main layout generator combining LLM DSL generation with constraint solving.
+    Layout generator with built-in quality assurance.
+
+    Quality pipeline per layout:
+      1. LLM generates DSL
+      2. Validator checks structure, density, and relation diversity
+      3. Solver produces coordinates
+      4. Post-verification: directional relations checked against coordinates
+      5. Deduplication: no repeated object sets or relation topologies
 
     Usage:
         generator = LayoutGenerator(model_name="...", api_keys=[...])
-        layouts = await generator.generate_batch(object_lists, num_layouts=100)
+        templates, layouts = await generator.generate_batch(object_lists)
     """
 
     def __init__(
@@ -210,17 +242,6 @@ class LayoutGenerator:
         solver_threads: int = 4,
         seed: Optional[int] = None
     ):
-        """
-        Initialize layout generator.
-
-        Args:
-            model_name: LLM model name for DSL generation
-            api_keys: API keys for LLM access
-            max_concurrent_per_key: Max concurrent API requests per key
-            max_retries: Max retries per request
-            solver_threads: Number of threads for parallel solving
-            seed: Random seed for reproducibility
-        """
         self.stream_generator = StreamGenerator(
             model_name=model_name,
             api_keys=api_keys,
@@ -232,78 +253,56 @@ class LayoutGenerator:
         self.seed = seed
         self._template_counter = 0
         self._lock = asyncio.Lock()
+        self._seen_structures: Set[tuple] = set()
 
     async def generate_batch(
         self,
         object_lists: List[List[str]],
         layouts_per_template: int = 1
     ) -> Tuple[List[Template], List[Layout]]:
-        """
-        Generate layouts for multiple object lists.
-
-        Args:
-            object_lists: List of object name lists (2-9 objects each)
-            layouts_per_template: Number of layout variations per template
-
-        Returns:
-            Tuple of (templates, layouts)
-        """
-        # Generate DSLs via LLM
+        """Generate layouts with quality assurance and deduplication."""
         prompts = [
             {"id": str(i), "prompt": _create_user_prompt(obj_list)}
             for i, obj_list in enumerate(object_lists)
         ]
 
         templates: List[Template] = []
-        dsls: List[DSL] = []
         processed_ids: Set[str] = set()
 
-        # Stream DSL generation
         async for result in self.stream_generator.generate_stream(
             prompts=prompts,
             system_prompt=DSL_SYSTEM_PROMPT,
             validate_func=self._validate_dsl_response
         ):
-            # Defensive check for valid result
             if result is None or "id" not in result or "result" not in result:
                 continue
-
-            # Skip duplicates
             if result["id"] in processed_ids:
                 continue
             processed_ids.add(result["id"])
 
-            prompt_id = result["id"]
-            response = result["result"]
-
             try:
-                dsl = self._parse_response(response)
+                dsl = self._parse_response(result["result"])
                 if dsl is None:
-                    logger.warning(f"Failed to parse DSL for prompt {prompt_id}")
                     continue
 
                 async with self._lock:
                     template = _abstract_to_template(dsl, self._template_counter)
+
+                    # Dedup structure
+                    sk = _structure_key(template)
+                    if sk in self._seen_structures:
+                        logger.debug(f"Duplicate structure for prompt {result['id']}, skipping")
+                        continue
+                    self._seen_structures.add(sk)
                     self._template_counter += 1
 
                 templates.append(template)
-                dsls.append(dsl)
-                
-                # Log template details
-                relation_summary = [f"{r.subject} {r.relation} {r.reference}" for r in dsl.relations[:3]]
-                if len(dsl.relations) > 3:
-                    relation_summary.append(f"... +{len(dsl.relations)-3} more")
-                logger.info(
-                    f"Generated template {template.id}: {template.count} objects, "
-                    f"{len(dsl.relations)} relations. Sample: {'; '.join(relation_summary)}"
-                )
 
             except Exception as e:
-                logger.error(f"Error processing response {prompt_id}: {e}")
+                logger.error(f"Error processing response {result['id']}: {e}")
 
-        # Solve templates to layouts in parallel
-        layouts = await self._solve_templates_parallel(templates, layouts_per_template)
-
+        # Solve + verify
+        layouts = await self._solve_and_verify(templates, layouts_per_template)
         return templates, layouts
 
     async def generate_single(
@@ -311,26 +310,14 @@ class LayoutGenerator:
         object_names: List[str],
         num_layouts: int = 1
     ) -> Tuple[Optional[Template], List[Layout]]:
-        """
-        Generate layouts for a single object list.
-
-        Args:
-            object_names: List of 2-9 object names
-            num_layouts: Number of layout variations
-
-        Returns:
-            Tuple of (template, layouts)
-        """
         templates, layouts = await self.generate_batch([object_names], num_layouts)
         template = templates[0] if templates else None
         return template, layouts
 
     def _validate_dsl_response(self, response: str) -> Optional[str]:
-        """Validate LLM response contains valid DSL JSON."""
         data = JSONParser.parse(response)
         if data is None:
             return None
-        
         try:
             parse_dsl(data)
             return response
@@ -338,25 +325,19 @@ class LayoutGenerator:
             return None
 
     def _parse_response(self, response: str) -> Optional[DSL]:
-        """Parse LLM response to DSL object."""
         data = JSONParser.parse(response)
         if data is None:
-            logger.warning("Failed to parse JSON from response")
             return None
         try:
-            dsl = parse_dsl(data)
-            logger.info(f"Successfully parsed DSL: {len(data.get('objects', []))} objects, {len(data.get('relations', []))} relations")
-            return dsl
+            return parse_dsl(data)
         except DSLValidationError as e:
-            logger.warning(f"DSL validation failed: {e}")
+            logger.debug(f"DSL validation failed: {e}")
             return None
 
-    async def _solve_templates_parallel(
-        self,
-        templates: List[Template],
-        layouts_per_template: int
+    async def _solve_and_verify(
+        self, templates: List[Template], layouts_per_template: int
     ) -> List[Layout]:
-        """Solve templates to layouts using thread pool."""
+        """Solve templates and verify directional relations."""
         loop = asyncio.get_event_loop()
         tasks = []
 
@@ -365,10 +346,7 @@ class LayoutGenerator:
                 seed = self.seed + template.id * 1000 + i if self.seed else None
                 tasks.append(
                     loop.run_in_executor(
-                        self.solver_pool,
-                        self._solve_single,
-                        template,
-                        seed
+                        self.solver_pool, self._solve_and_verify_single, template, seed
                     )
                 )
 
@@ -383,39 +361,33 @@ class LayoutGenerator:
 
         return layouts
 
-    def _solve_single(self, template: Template, seed: Optional[int]) -> Optional[Layout]:
-        """Solve single template to layout (runs in thread pool)."""
+    def _solve_and_verify_single(self, template: Template, seed: Optional[int]) -> Optional[Layout]:
+        """Solve and post-verify a single template."""
         solver = LayoutSolver(seed)
         dsl = _template_to_dsl(template)
 
         try:
-            return solver.solve(dsl)
+            layout = solver.solve(dsl)
         except SolverError as e:
             logger.warning(f"Failed to solve template {template.id}: {e}")
             return None
 
+        if not _verify_directional_relations(layout):
+            logger.warning(f"Template {template.id}: directional verification failed")
+            return None
+
+        return layout
+
+
+# ─── Utility ──────────────────────────────────────────────────────────────────
 
 def sample_object_names(
     available_objects: List[str],
     count: Optional[int] = None,
     seed: Optional[int] = None
 ) -> List[str]:
-    """
-    Sample random object names for DSL generation.
-
-    Args:
-        available_objects: List of available object names
-        count: Number of objects (random 2-9 if None)
-        seed: Random seed
-
-    Returns:
-        List of sampled object names
-    """
-    import numpy as np
     rng = np.random.RandomState(seed)
-
     if count is None:
         count = rng.randint(MIN_OBJECTS, MAX_OBJECTS + 1)
-
     count = max(MIN_OBJECTS, min(MAX_OBJECTS, count, len(available_objects)))
     return list(rng.choice(available_objects, size=count, replace=False))

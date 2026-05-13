@@ -5,6 +5,7 @@ tqdm
 matplotlib
 scikit-learn
 openai
+python-dotenv
 pyyaml
 torch
 torchvision

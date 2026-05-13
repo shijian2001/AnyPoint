@@ -6,37 +6,51 @@ from typing import Optional, Dict, Any
 
 
 class JSONParser:
-    """Utility class for parsing and extracting JSON from text responses."""
+    """Extract and parse JSON from LLM responses."""
 
     @staticmethod
     def parse(response: str) -> Optional[Dict[str, Any]]:
-        """
-        Extract and parse JSON from a response string.
-
-        Args:
-            response: String potentially containing JSON
-
-        Returns:
-            Parsed JSON dictionary or None if parsing fails
-        """
-        # If input is already a dict, return it
         if isinstance(response, dict):
             return response
-        
         if not isinstance(response, str):
             return None
-        
-        # Try to match JSON in a code block first
-        json_match = re.search(r'```(?:json)?\s*({.*?})\s*```', response, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            json_str = response
-        
+
+        # Strategy 1: Find JSON in first code block
+        code_blocks = re.findall(r'```(?:json)?\s*(.*?)\s*```', response, re.DOTALL)
+        for block in code_blocks:
+            result = JSONParser._try_parse(block)
+            if result is not None:
+                return result
+
+        # Strategy 2: Find outermost { ... } using bracket matching
+        result = JSONParser._extract_balanced_json(response)
+        if result is not None:
+            return result
+
+        # Strategy 3: Direct parse
+        return JSONParser._try_parse(response)
+
+    @staticmethod
+    def _try_parse(text: str) -> Optional[Dict[str, Any]]:
         try:
-            parsed_data = json.loads(json_str)
-            if isinstance(parsed_data, dict):
-                return parsed_data
+            data = json.loads(text)
+            return data if isinstance(data, dict) else None
+        except (json.JSONDecodeError, ValueError):
             return None
-        except json.JSONDecodeError:
+
+    @staticmethod
+    def _extract_balanced_json(text: str) -> Optional[Dict[str, Any]]:
+        """Find the first balanced { ... } in text using bracket counting."""
+        start = text.find('{')
+        if start == -1:
             return None
+
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == '{':
+                depth += 1
+            elif text[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    return JSONParser._try_parse(text[start:i+1])
+        return None
