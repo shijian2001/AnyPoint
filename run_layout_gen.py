@@ -96,12 +96,33 @@ async def generate(args) -> Dict[str, Any]:
     all_layouts = []
     start_time = time.time()
 
+    # Incremental save setup
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    layouts_file = output_dir / "layouts.jsonl"
+    templates_file = output_dir / "templates.jsonl"
+
+    # Resume: count existing lines if files exist
+    existing = 0
+    if layouts_file.exists():
+        with open(layouts_file) as f:
+            existing = sum(1 for _ in f)
+        logger.info(f"Resuming: {existing} layouts already saved")
+
     for batch_start in range(0, len(object_lists), batch_size):
         batch = object_lists[batch_start:batch_start + batch_size]
 
         templates, layouts = await generator.generate_batch(batch)
         all_templates.extend(templates)
         all_layouts.extend(layouts)
+
+        # Incremental save (append)
+        with open(layouts_file, 'a') as f:
+            for layout in layouts:
+                f.write(json.dumps(layout.to_dict(), ensure_ascii=False) + '\n')
+        with open(templates_file, 'a') as f:
+            for template in templates:
+                f.write(json.dumps(template.to_dict(), ensure_ascii=False) + '\n')
 
         elapsed = time.time() - start_time
         total_attempted = batch_start + len(batch)
@@ -118,12 +139,6 @@ async def generate(args) -> Dict[str, Any]:
 
 def save_results(templates, layouts, output_dir: Path, args):
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    with open(output_dir / "layouts.json", 'w') as f:
-        json.dump([l.to_dict() for l in layouts], f, indent=2)
-
-    with open(output_dir / "templates.json", 'w') as f:
-        json.dump([t.to_dict() for t in templates], f, indent=2)
 
     # Quality summary
     rel_counter = Counter()
