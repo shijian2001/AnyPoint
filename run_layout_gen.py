@@ -77,11 +77,6 @@ async def generate(args) -> Dict[str, Any]:
 
     wrapper_mod.QAWrapper.__init__ = patched_init
 
-    # Sample unique object lists
-    object_lists = sample_unique_object_lists(all_objects, args.num_layouts, args.seed)
-    logger.info(f"Sampled {len(object_lists)} unique object lists")
-
-    # Generate in batches for progress reporting
     generator = LayoutGenerator(
         model_name=args.model,
         api_keys=[args.api_key],
@@ -91,10 +86,12 @@ async def generate(args) -> Dict[str, Any]:
         seed=args.seed,
     )
 
+    target = args.num_layouts
     batch_size = args.concurrency * 3
     all_templates = []
     all_layouts = []
     start_time = time.time()
+    seed_offset = 0
 
     # Incremental save setup
     output_dir = Path(args.output)
@@ -102,21 +99,26 @@ async def generate(args) -> Dict[str, Any]:
     layouts_file = output_dir / "layouts.jsonl"
     templates_file = output_dir / "templates.jsonl"
 
-    # Resume: count existing lines if files exist
-    existing = 0
+    # Resume from existing file
     if layouts_file.exists():
         with open(layouts_file) as f:
             existing = sum(1 for _ in f)
-        logger.info(f"Resuming: {existing} layouts already saved")
+        logger.info(f"Resuming: {existing} layouts already saved, need {target - existing} more")
+        target -= existing
+        seed_offset = existing
 
-    for batch_start in range(0, len(object_lists), batch_size):
-        batch = object_lists[batch_start:batch_start + batch_size]
+    while len(all_layouts) < target:
+        remaining = target - len(all_layouts)
+        # Over-sample slightly to account for failures
+        n_sample = min(batch_size, int(remaining * 1.1) + batch_size)
+        object_lists = sample_unique_object_lists(all_objects, n_sample, args.seed + seed_offset)
+        seed_offset += n_sample
 
-        templates, layouts = await generator.generate_batch(batch)
+        templates, layouts = await generator.generate_batch(object_lists)
         all_templates.extend(templates)
         all_layouts.extend(layouts)
 
-        # Incremental save (append)
+        # Incremental save
         with open(layouts_file, 'a') as f:
             for layout in layouts:
                 f.write(json.dumps(layout.to_dict(), ensure_ascii=False) + '\n')
@@ -125,16 +127,14 @@ async def generate(args) -> Dict[str, Any]:
                 f.write(json.dumps(template.to_dict(), ensure_ascii=False) + '\n')
 
         elapsed = time.time() - start_time
-        total_attempted = batch_start + len(batch)
         rate = len(all_layouts) / elapsed if elapsed > 0 else 0
-        eta = (len(object_lists) - total_attempted) / rate if rate > 0 else 0
+        eta = (target - len(all_layouts)) / rate if rate > 0 else 0
         logger.info(
-            f"Progress: {total_attempted}/{len(object_lists)} batched, "
-            f"{len(all_layouts)} layouts produced ({len(all_layouts)/total_attempted:.0%} yield), "
+            f"Progress: {len(all_layouts)}/{target}, "
             f"{rate:.1f}/sec, ETA: {eta:.0f}s"
         )
 
-    return all_templates, all_layouts
+    return all_templates[:target], all_layouts[:target]
 
 
 def save_results(templates, layouts, output_dir: Path, args):
