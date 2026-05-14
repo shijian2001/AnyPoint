@@ -168,6 +168,7 @@ cython_debug/
 data/
 
 output_test/
+local_tests/
 
 test.py
 

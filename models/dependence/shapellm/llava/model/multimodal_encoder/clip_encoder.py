@@ -17,9 +17,12 @@ class CLIPVisionTower(nn.Module):
                 self.cfg_path = candidate
             else:
                 self.cfg_path = os.path.abspath(self.cfg_path)
-        self.vision_tower_path = args.vision_tower_path
+        self.vision_tower_path = getattr(args, 'recon_path', None) or args.vision_tower_path
         self.config = cfg_from_yaml_file(self.cfg_path)
         self.config.with_color = args.with_color
+        eva_path = getattr(args, 'EVA_path', None)
+        if eva_path is not None:
+            self.config.model.pretrained_weight_path = os.path.abspath(eva_path)
         self.select_layer = args.mm_vision_select_layer
         self.select_feature = getattr(args, 'mm_vision_select_feature', 'patch')
 

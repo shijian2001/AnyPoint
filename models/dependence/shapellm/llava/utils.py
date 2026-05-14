@@ -4,8 +4,6 @@ import logging.handlers
 import os
 import sys
 
-import requests
-
 from .constants import LOGDIR
 
 server_error_msg = "**NETWORK ERROR DUE TO HIGH TRAFFIC. PLEASE REGENERATE OR REFRESH THIS PAGE.**"
@@ -103,6 +101,8 @@ def violates_moderation(text):
     """
     Check whether the text violates OpenAI moderation API.
     """
+    import requests
+
     url = "https://api.openai.com/v1/moderations"
     headers = {"Content-Type": "application/json",
                "Authorization": "Bearer " + os.environ["OPENAI_API_KEY"]}

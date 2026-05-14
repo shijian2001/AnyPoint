@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List, Dict, Set, Any
+from typing import List, Dict, Any
 import numpy as np
 
 
@@ -35,8 +35,25 @@ class PointCloudMetadata:
                         self.objects.append({
                             "object_id": object_id,
                             "object_name": obj_data.get("object", ""),
-                            "components": obj_data.get("components", [])
+                            "components": obj_data.get("components", []),
+                            "glb_path": self._resolve_glb_path(object_id, obj_data),
                         })
+
+    def _resolve_glb_path(self, object_id: str, obj_data: Dict[str, Any]) -> str:
+        metadata_root = os.path.dirname(os.path.abspath(self.jsonl_file))
+        candidates = [
+            obj_data.get("glb_path"),
+            obj_data.get("mesh_path"),
+            obj_data.get("model_path"),
+            obj_data.get("asset_path"),
+        ]
+        for candidate in candidates:
+            if candidate:
+                abs_path = candidate if os.path.isabs(candidate) else os.path.join(metadata_root, candidate)
+                if os.path.exists(abs_path):
+                    return os.path.abspath(abs_path)
+
+        return None
 
     def _load_or_create_attributes(self) -> None:
         """Load or create attributes summary file."""
@@ -87,6 +104,15 @@ class PointCloudMetadata:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Point cloud file not found: {file_path}")
         return np.load(file_path)
+
+    def load_glb_path(self, object_id: str) -> str:
+        for obj in self.objects:
+            if obj["object_id"] == object_id:
+                glb_path = obj.get("glb_path")
+                if not glb_path:
+                    raise FileNotFoundError(f"GLB path not found for object_id={object_id}")
+                return glb_path
+        raise KeyError(f"Unknown object_id={object_id}")
 
     def sample_angle(self) -> float:
         """Sample random rotation angle."""

@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Dict, Any, Tuple, Set
+from typing import List, Dict, Any, Tuple
 from tqdm import tqdm
 from .base import BasePointQAGenerator, TaskPlan, Task
 from .utils import ATTRIBUTES
@@ -26,8 +26,8 @@ class DistanceGenerator(BasePointQAGenerator):
 class WhatDistanceGenerator(DistanceGenerator):
     """Generator for 'What is the object that is closest/farthest from the {reference_object}?' questions."""
 
-    def __init__(self, metadata, seed: int = 42, layouts = None):
-        super().__init__(metadata, seed, layouts)
+    def __init__(self, metadata, seed: int = 42, layouts = None, background_dir: str = None, scene_builder = None):
+        super().__init__(metadata, seed, layouts, background_dir=background_dir, scene_builder=scene_builder)
         
         # Use 'special' layouts (3-9 objects) for sufficient scene distractors
         if self.layouts_by_type:
@@ -160,8 +160,8 @@ class WhereDistanceGenerator(DistanceGenerator):
 
         with tqdm(total=num_tasks, desc=f"Generating where-{distance_type} tasks") as pbar:
             while len(tasks) < num_tasks:
-                # Sample layout with at least 2 objects
-                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=2)
+                # Sample layout with at least 3 objects
+                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=3)
                 
                 # Pick reference object
                 ref_idx = self.rng.randint(len(layout["objects"]))
@@ -252,7 +252,7 @@ class ListAttributeDistanceGenerator(DistanceGenerator):
         with tqdm(total=num_tasks, desc=f"Generating list-attribute-{distance_type} tasks") as pbar:
             while len(tasks) < num_tasks:
                 # Sample layout
-                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=2)
+                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=3)
                 
                 # Sample attribute
                 attribute = self.rng.choice(ATTRIBUTES)
@@ -368,7 +368,7 @@ class CountAttributeDistanceGenerator(DistanceGenerator):
                     continue
 
                 # Sample layout
-                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=2)
+                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=3)
                 
                 # Pick reference object
                 ref_idx = self.rng.randint(len(layout["objects"]))

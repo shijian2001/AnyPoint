@@ -506,8 +506,8 @@ class ReConBlocks(nn.Module):
             )
             for i in range(depth)])
 
-    def load_pretrained_timm_weights(self):
-        model = timm.create_model(self.pretrained_model_name, pretrained=True)
+    def load_pretrained_timm_weights(self, checkpoint_path):
+        model = timm.create_model(self.pretrained_model_name, pretrained=False, checkpoint_path=checkpoint_path)
         state_dict = model.blocks.state_dict()
         self.local_blocks.load_state_dict(state_dict, strict=True)
 

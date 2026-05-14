@@ -2,18 +2,19 @@
 
 import os
 import json
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Optional, Dict, Any
 import numpy as np
 from tqdm import tqdm
 
 from point_qa_generator.base import Task
 from point_qa_generator.generator import PointQAGenerator
 from models.point_qa_model import PointQAModel
+from models.base_qa_model import make_options
 
 from .config import EvalConfig, TaskResult
 from .embedder import TaskEmbedder
 from .utility import UtilityCalculator
-from .task_pool import TaskPool
+from .task_pool import PoolItem, TaskPool
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -46,6 +47,7 @@ class DynamicEvaluator:
     
     Key sets:
         H: History (all tested tasks)
+        C: Correct tasks
         E: Errors (failed tasks)
     """
     
@@ -62,11 +64,12 @@ class DynamicEvaluator:
         # Components
         self.embedder = TaskEmbedder()
         self.utility = UtilityCalculator(config.lambda_explore)
-        self.pool = TaskPool(qa_generator, config.seed)
+        self.pool = TaskPool(qa_generator, config.seed, config.pool_size)
         
-        # State: H and E
+        # State: H, C and E
         self.H_tasks: List[Task] = []
-        self.H_embs: Optional[np.ndarray] = None
+        self.C_tasks: List[Task] = []
+        self.C_embs: Optional[np.ndarray] = None
         
         self.E_tasks: List[Task] = []
         self.E_embs: Optional[np.ndarray] = None
@@ -76,10 +79,18 @@ class DynamicEvaluator:
         # Results
         self.results: List[TaskResult] = []
         self.n_eval = 0
+        self.point_cloud_dir: Optional[str] = None
     
     def run(self, output_dir: str) -> Dict[str, Any]:
         """Execute evaluation pipeline."""
         os.makedirs(output_dir, exist_ok=True)
+        self.point_cloud_dir = os.path.join(output_dir, "eval_point_clouds")
+        self.pool.ensure_ready(os.path.join(output_dir, "task_pool_cache"))
+        if self.pool.remaining_count() < self.cfg.budget:
+            raise ValueError(
+                f"Pre-generated pool has only {self.pool.remaining_count()} tasks, "
+                f"but budget={self.cfg.budget}. Increase --pool-size or reduce --budget."
+            )
         
         self._print_header()
         
@@ -102,7 +113,7 @@ class DynamicEvaluator:
         """Initialize with random batch."""
         print("🔥 Cold Start\n")
         
-        candidates = self.pool.sample(self.cfg.batch_size)
+        candidates = self.pool.pop_random(self.cfg.batch_size)
         self._evaluate(candidates, phase="cold_start")
         self._update()
         
@@ -112,16 +123,18 @@ class DynamicEvaluator:
     def _iterate(self, iteration: int):
         """Single evaluation iteration."""
         remaining = self.cfg.budget - self.n_eval
-        k = min(self.cfg.batch_size, remaining)
+        k = min(self.cfg.batch_size, remaining, self.pool.remaining_count())
+        if k <= 0:
+            return
         
         print(f"{'─'*70}")
         print(f"🔄 Iter {iteration}: {self.n_eval}/{self.cfg.budget} | |H|={len(self.H_tasks)} |E|={len(self.E_tasks)}")
         print(f"{'─'*70}\n")
-        
-        # Generate candidates
-        candidates = self.pool.sample(self.cfg.pool_size)
-        print(f"Generated {len(candidates)} candidates")
-        
+
+        # Re-rank the remaining fixed pool
+        candidates = self.pool.remaining()
+        print(f"Remaining candidates: {len(candidates)}")
+
         # Select top-K by utility
         selected, utilities = self._select_topk(candidates, k)
         print(f"Selected top-{k}: U ∈ [{utilities[0]:.3f}, {utilities[-1]:.3f}]\n")
@@ -135,28 +148,27 @@ class DynamicEvaluator:
     
     def _select_topk(
         self,
-        candidates: List[Tuple[Task, np.ndarray]],
+        candidates: List[PoolItem],
         k: int
-    ) -> Tuple[List[Tuple[Task, np.ndarray]], List[float]]:
+    ) -> tuple[List[PoolItem], List[float]]:
         """Select top-K by utility."""
         
-        tasks = [t for t, _ in candidates]
+        tasks = [item.task for item in candidates]
         v_cand = self.embedder.encode(tasks)
         
-        # U(t) = max(sim(t,E)) - λ·max(sim(t,H))
-        scores = self.utility.compute(v_cand, self.H_embs, self.E_embs)
+        scores = self.utility.compute(v_cand, self.C_embs, self.E_embs)
         
         # Top-K
         top_idx = np.argsort(scores)[-k:][::-1]
         
-        selected = [candidates[i] for i in top_idx]
+        selected = self.pool.pop_indices(top_idx.tolist())
         selected_u = [scores[i] for i in top_idx]
         
         return selected, selected_u
     
     def _evaluate(
         self,
-        batch: List[Tuple[Task, np.ndarray]],
+        batch: List[PoolItem],
         utilities: Optional[List[float]] = None,
         phase: str = "eval"
     ):
@@ -164,12 +176,19 @@ class DynamicEvaluator:
         if utilities is None:
             utilities = [None] * len(batch)
         
-        for (task, pc), u in tqdm(
+        for item, u in tqdm(
             zip(batch, utilities),
             total=len(batch),
             desc=phase
         ):
-            result = self._eval_single(task, pc, u)
+            task = item.task
+            pc = item.point_cloud
+            if pc is None:
+                pc = self.gen.materialize_point_cloud(task)
+                item.point_cloud = pc
+            point_cloud_path = self._eval_point_cloud_path(self.n_eval)
+            self._save_eval_point_cloud(point_cloud_path, pc)
+            result = self._eval_single(task, point_cloud_path, u)
             
             self.H_tasks.append(task)
             self.results.append(result)
@@ -178,18 +197,21 @@ class DynamicEvaluator:
                 self.E_tasks.append(task)
                 self.E_point_clouds.append(pc)
                 self.E_indices.append(self.n_eval)
+            else:
+                self.C_tasks.append(task)
             
             self.n_eval += 1
     
     def _eval_single(
         self,
         task: Task,
-        pc: np.ndarray,
+        point_cloud_path: str,
         u: Optional[float]
     ) -> TaskResult:
         """Evaluate single task."""
+        _, _, formatted_options = make_options(task.options, self.model.format)
         result = self.model.multiple_choice_qa(
-            data={'point_cloud': pc},
+            data={'point_cloud_path': point_cloud_path},
             question=task.question,
             choices=task.options,
             answer=task.answer
@@ -205,18 +227,27 @@ class DynamicEvaluator:
             task_id=self.n_eval,
             question=task.question,
             answer=task.answer,
+            model_raw_output=result['free_form_answer'],
             model_answer=result['multiple_choice_answer'],
             is_correct=(result['accuracy'] == 1),
             utility=u,
             category=category,
-            options=task.options,
+            options=formatted_options,
             layout_description=layout_desc
         )
+
+    def _eval_point_cloud_path(self, task_id: int) -> str:
+        return os.path.join(self.point_cloud_dir, f"{task_id:06d}.npy")
+
+    @staticmethod
+    def _save_eval_point_cloud(path: str, point_cloud: np.ndarray) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        np.save(path, point_cloud)
     
     def _update(self):
-        """Update H and E embeddings."""
-        if self.H_tasks:
-            self.H_embs = self.embedder.encode(self.H_tasks)
+        """Update correct and error embeddings."""
+        if self.C_tasks:
+            self.C_embs = self.embedder.encode(self.C_tasks)
         if self.E_tasks:
             self.E_embs = self.embedder.encode(self.E_tasks)
     
@@ -313,7 +344,7 @@ class DynamicEvaluator:
         c = self.cfg
         print(f"\n{'='*70}")
         print(f"Dynamic Evaluation")
-        print(f"  Budget: {c.budget} | Batch: {c.batch_size} | Pool: {c.pool_size} | λ: {c.lambda_explore}")
+        print(f"  Budget: {c.budget} | Batch: {c.batch_size} | Fixed Pool: {c.pool_size} | λ: {c.lambda_explore}")
         print(f"{'='*70}\n")
     
     def _print_summary(self, summary: Dict):

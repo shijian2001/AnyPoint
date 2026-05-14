@@ -26,6 +26,17 @@ class SizeGenerator(BasePointQAGenerator):
         """Calculate volume from AABB half-extents."""
         return size[0] * size[1] * size[2] * 8  # Full AABB volume
 
+    def _max_generation_attempts(self, num_tasks: int) -> int:
+        """Bound synthesis retries so infeasible configs fail instead of hanging."""
+        return max(1000, num_tasks * 200)
+
+    def _raise_generation_failure(self, task_plan: TaskPlan, num_tasks: int, generated: int, attempts: int) -> None:
+        size_type = task_plan.generator_config.get("size_type", "unknown")
+        raise RuntimeError(
+            f"Failed to generate enough {task_plan.generator_type} tasks "
+            f"(size_type={size_type}): generated {generated}/{num_tasks} after {attempts} attempts"
+        )
+
 
 class WhatSizeGenerator(SizeGenerator):
     """Generator for 'What is the (largest/smallest) object in the scene?' questions."""
@@ -37,11 +48,17 @@ class WhatSizeGenerator(SizeGenerator):
 
         tasks = []
         seen_combinations = set()
+        attempts = 0
+        max_attempts = self._max_generation_attempts(num_tasks)
 
         with tqdm(total=num_tasks, desc=f"Generating what-{size_type} tasks") as pbar:
             while len(tasks) < num_tasks:
+                if attempts >= max_attempts:
+                    self._raise_generation_failure(task_plan, num_tasks, len(tasks), attempts)
+                attempts += 1
+
                 # Sample layout
-                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=2)
+                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=3)
                 
                 # Calculate volumes for all objects
                 volumes = []
@@ -128,10 +145,16 @@ class ListAttributeSizeGenerator(SizeGenerator):
 
         tasks = []
         seen_combinations = set()
+        attempts = 0
+        max_attempts = self._max_generation_attempts(num_tasks)
 
         with tqdm(total=num_tasks, desc=f"Generating list-attribute-{size_type} tasks") as pbar:
             while len(tasks) < num_tasks:
-                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=2)
+                if attempts >= max_attempts:
+                    self._raise_generation_failure(task_plan, num_tasks, len(tasks), attempts)
+                attempts += 1
+
+                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=3)
                 attribute = self.rng.choice(ATTRIBUTES)
                 
                 # Find largest/smallest with attribute
@@ -224,10 +247,16 @@ class CountAttributeSizeGenerator(SizeGenerator):
 
         tasks = []
         seen_combinations = set()
+        attempts = 0
+        max_attempts = self._max_generation_attempts(num_tasks)
 
         with tqdm(total=num_tasks, desc=f"Generating count-attribute-{size_type} tasks") as pbar:
             while len(tasks) < num_tasks:
-                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=2)
+                if attempts >= max_attempts:
+                    self._raise_generation_failure(task_plan, num_tasks, len(tasks), attempts)
+                attempts += 1
+
+                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=3)
                 attribute = self.rng.choice(ATTRIBUTES)
                 
                 # Find largest/smallest with attribute
@@ -338,12 +367,18 @@ class WhereSizeGenerator(SizeGenerator):
         
         tasks = []
         seen_combinations = set()
+        attempts = 0
+        max_attempts = self._max_generation_attempts(num_tasks)
 
         desc = f"Generating where-{size_type} tasks"
         with tqdm(total=num_tasks, desc=desc) as pbar:
             while len(tasks) < num_tasks:
+                if attempts >= max_attempts:
+                    self._raise_generation_failure(task_plan, num_tasks, len(tasks), attempts)
+                attempts += 1
+
                 # Sample layout
-                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=2)
+                layout, object_mapping = self._sample_layout_and_map_objects(min_objects=3)
                 
                 # Calculate volumes for all objects
                 volumes = []
@@ -364,7 +399,8 @@ class WhereSizeGenerator(SizeGenerator):
                 ref_candidates = [(i, name, pos) for i, name, pos, _ in volumes if i != target_idx]
                 if not ref_candidates:
                     continue
-                ref_idx, ref_placeholder, ref_pos = self.rng.choice(ref_candidates)
+                ref_choice_idx = self.rng.randint(len(ref_candidates))
+                ref_idx, ref_placeholder, ref_pos = ref_candidates[ref_choice_idx]
                 ref_obj = object_mapping[ref_placeholder]
                 
                 combo_key = (target_obj["object_id"], ref_obj["object_id"], size_type)

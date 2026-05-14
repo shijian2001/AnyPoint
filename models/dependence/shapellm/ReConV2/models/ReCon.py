@@ -1,3 +1,4 @@
+import os
 import timm
 import torch
 import numpy as np
@@ -13,6 +14,16 @@ from ..utils.checkpoint import get_missing_parameters_message, get_unexpected_pa
 from ..models.transformer import Group, ZGroup, PatchEmbedding, PositionEmbeddingCoordsSine, GPTExtractor, \
     GPTGenerator, MAEExtractor, MAEGenerator
 
+def resolve_timm_weight_path(config):
+    if getattr(config, 'pretrained_model_name', '') == "":
+        return None
+    weight_path = getattr(config, 'pretrained_weight_path', None)
+    if not weight_path:
+        raise FileNotFoundError(f"Missing EVA_path for {config.pretrained_model_name}")
+    weight_path = os.path.abspath(weight_path)
+    if not os.path.isfile(weight_path):
+        raise FileNotFoundError(weight_path)
+    return weight_path
 
 # Pretrain model
 class MaskTransformer(nn.Module):
@@ -97,10 +108,12 @@ class MaskTransformer(nn.Module):
         self.num_group = config.num_group
         self.num_mask = int((self.num_group - self.keep_attend) * self.mask_ratio)
 
+        weight_path = resolve_timm_weight_path(config)
+
         if config.pretrained_model_name == "":
             print_log(f'[ReCon] No pretrained model is loaded.', logger='ReCon')
         elif config.pretrained_model_name in timm.list_models(pretrained=True):
-            self.encoder.blocks.load_pretrained_timm_weights()
+            self.encoder.blocks.load_pretrained_timm_weights(weight_path)
             print_log(f'[ReCon] Timm pretrained model {config.pretrained_model_name} is successful loaded.',
                       logger='ReCon')
         else:

@@ -49,6 +49,7 @@ def run_dynamic_eval(
     cfg_path: str = None,
     test_ckpt: str = None,
     prompt_template: str = None,
+    background_dir: str = None,
     **model_kwargs
 ) -> Dict[str, Any]:
     """
@@ -63,7 +64,7 @@ def run_dynamic_eval(
         output_dir: Output directory
         budget: Total budget (B in algorithm)
         batch_size: Batch size per iteration (K in algorithm)
-        pool_size: Candidate pool size (N in algorithm, N >> K)
+        pool_size: Total size of the pre-generated fixed candidate pool
         lambda_explore: Exploration weight (λ in algorithm, λ ∈ [0,1])
         seed: Random seed
         
@@ -75,7 +76,8 @@ def run_dynamic_eval(
         metadata_file=metadata_file,
         pcd_dir=pcd_dir,
         layouts_file=layouts_file,
-        seed=seed
+        seed=seed,
+        background_dir=background_dir,
     )
     
     real_ckpt = model_checkpoint or test_ckpt
@@ -133,12 +135,13 @@ def main():
     # Optional
     parser.add_argument("--budget", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=10)
-    parser.add_argument("--pool-size", type=int, default=1000)
+    parser.add_argument("--pool-size", type=int, default=1000, help="Total size of the pre-generated fixed pool")
     parser.add_argument("--lambda-explore", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--cfg-path")
     parser.add_argument("--prompt-template")
+    parser.add_argument("--background-dir", "--background_dir", dest="background_dir")
 
     args, unknown = parser.parse_known_args()
     extra_kwargs = _parse_unknown_args(unknown)
@@ -159,18 +162,30 @@ def main():
         cfg_path=args.cfg_path,
         test_ckpt=args.test_ckpt,
         prompt_template=args.prompt_template,
+        background_dir=args.background_dir,
         **extra_kwargs,
     )
 
 
 def _parse_unknown_args(unknown: List[str]) -> Dict[str, Any]:
     """Parse ``--key value`` pairs and forward them to the model constructor."""
+    removed_cli_args = {
+        "scene-backend",
+        "blender-executable",
+        "blender-workspace",
+        "scene-point-count",
+        "export-scene-glb",
+        "render-preview",
+        "background-scene-glb",
+    }
     parsed: Dict[str, Any] = {}
     i = 0
     while i < len(unknown):
         token = unknown[i]
         if not token.startswith("--"):
             raise ValueError(f"无法解析额外参数: {token}")
+        if token[2:] in removed_cli_args:
+            raise ValueError(f"Removed CLI argument: {token}")
 
         key = token[2:].replace("-", "_")
         value: Any = True
@@ -178,9 +193,6 @@ def _parse_unknown_args(unknown: List[str]) -> Dict[str, Any]:
         if i + 1 < len(unknown) and not unknown[i + 1].startswith("--"):
             value = _coerce_cli_value(unknown[i + 1])
             i += 1
-
-        if key == "llava_model_base":
-            key = "model_base"
 
         parsed[key] = value
         i += 1

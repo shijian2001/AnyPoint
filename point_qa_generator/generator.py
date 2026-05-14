@@ -1,8 +1,9 @@
 import os
 import json
+import hashlib
 from typing import Dict, List, Tuple, Any
 import numpy as np
-from .base import TaskPlan
+from .base import TaskPlan, Task
 from .metadata import PointCloudMetadata
 from .distance import (WhatDistanceGenerator, WhereDistanceGenerator,
                        ListAttributeDistanceGenerator, CountAttributeDistanceGenerator)
@@ -17,7 +18,14 @@ from .size import (WhatSizeGenerator, ListAttributeSizeGenerator,
 class PointQAGenerator:
     """Main interface for Point QA generation."""
 
-    def __init__(self, metadata_file: str, pcd_dir: str, layouts_file: str, seed: int = 42):
+    def __init__(
+        self,
+        metadata_file: str,
+        pcd_dir: str,
+        layouts_file: str,
+        seed: int = 42,
+        background_dir: str = None,
+    ):
         """
         Initialize Point QA Generator with layout system.
 
@@ -28,33 +36,89 @@ class PointQAGenerator:
             seed: Random seed
         """
         self.metadata = PointCloudMetadata(metadata_file, pcd_dir, seed)
+        self.metadata_file = metadata_file
+        self.pcd_dir = pcd_dir
+        self.layouts_file = layouts_file
+        self.background_dir = background_dir or os.path.join(os.path.dirname(os.path.abspath(metadata_file)), "background")
         self.layouts = self._load_layouts(layouts_file)
+        self.layouts_by_id = {
+            layout.get("id"): layout
+            for layout in self.layouts
+            if layout.get("id") is not None
+        }
+        self.objects_by_id = {
+            obj["object_id"]: obj
+            for obj in self.metadata.objects
+        }
         self.layouts_classified = self._classify_layouts(self.layouts)
         self.rng = np.random.RandomState(seed)
+        self.scene_builder = None
         
         self.generators = {
             # Distance-based generators
-            "what_distance": WhatDistanceGenerator(self.metadata, seed, self.layouts_classified),
-            "where_distance": WhereDistanceGenerator(self.metadata, seed, self.layouts_classified),
-            "list_attribute_distance": ListAttributeDistanceGenerator(self.metadata, seed, self.layouts_classified),
-            "count_attribute_distance": CountAttributeDistanceGenerator(self.metadata, seed, self.layouts_classified),
+            "what_distance": WhatDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "where_distance": WhereDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "list_attribute_distance": ListAttributeDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "count_attribute_distance": CountAttributeDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
 
             # Attribute-based generators
-            "what_attribute": WhatAttributeGenerator(self.metadata, seed, self.layouts_classified),
-            "list_attribute": ListAttributeGenerator(self.metadata, seed, self.layouts_classified),
-            "count_attribute": CountAttributeGenerator(self.metadata, seed, self.layouts_classified),
+            "what_attribute": WhatAttributeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "list_attribute": ListAttributeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "count_attribute": CountAttributeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
 
             # Number-based generators
-            "count_object": CountObjectGenerator(self.metadata, seed, self.layouts_classified),
-            "frequent_object": FrequentObjectGenerator(self.metadata, seed, self.layouts_classified),
-            "list_attribute_frequent": ListAttributeFrequentGenerator(self.metadata, seed, self.layouts_classified),
-            "count_attribute_frequent": CountAttributeFrequentGenerator(self.metadata, seed, self.layouts_classified),
+            "count_object": CountObjectGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "frequent_object": FrequentObjectGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "list_attribute_frequent": ListAttributeFrequentGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "count_attribute_frequent": CountAttributeFrequentGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
 
             # Size-based generators
-            "what_size": WhatSizeGenerator(self.metadata, seed, self.layouts_classified),
-            "list_attribute_size": ListAttributeSizeGenerator(self.metadata, seed, self.layouts_classified),
-            "count_attribute_size": CountAttributeSizeGenerator(self.metadata, seed, self.layouts_classified),
-            "where_size": WhereSizeGenerator(self.metadata, seed, self.layouts_classified)
+            "what_size": WhatSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "list_attribute_size": ListAttributeSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "count_attribute_size": CountAttributeSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "where_size": WhereSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder)
+        }
+
+    def get_source_signature(self) -> Dict[str, Any]:
+        """Return a stable signature describing the synthesis inputs."""
+        return {
+            "metadata_file": self._file_signature(self.metadata_file),
+            "layouts_file": self._file_signature(self.layouts_file),
+            "pcd_dir": self._directory_signature(self.pcd_dir),
+            "background_dir": self._directory_signature(self.background_dir) if self.background_dir and os.path.isdir(self.background_dir) else None,
+        }
+
+    def get_source_signature_hash(self) -> str:
+        """Hash of the synthesis input signature for quick equality checks."""
+        signature_json = json.dumps(self.get_source_signature(), sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(signature_json.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _file_signature(path: str) -> Dict[str, Any]:
+        stat = os.stat(path)
+        return {
+            "path": os.path.abspath(path),
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+        }
+
+    @staticmethod
+    def _directory_signature(path: str) -> Dict[str, Any]:
+        entries = []
+        for root, _, files in os.walk(path):
+            for name in sorted(files):
+                full_path = os.path.join(root, name)
+                rel_path = os.path.relpath(full_path, path)
+                stat = os.stat(full_path)
+                entries.append({
+                    "path": rel_path,
+                    "size": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                })
+
+        return {
+            "path": os.path.abspath(path),
+            "files": entries,
         }
     
     def _load_layouts(self, layouts_file: str) -> List[Dict]:
@@ -183,11 +247,38 @@ class PointQAGenerator:
             return False
         
         # Distance/size-based generators need at least 3 objects
+        # (layouts guarantee this, but check for safety)
         if "distance" in generator_type or "size" in generator_type:
             return len(layout["objects"]) >= 3
         
         # Number-based generators are always compatible
         return True
+
+    def materialize_point_cloud(self, task: Task) -> np.ndarray:
+        """Rebuild a synthesized scene point cloud from task metadata."""
+        if not task.metadata:
+            raise ValueError("Task metadata is required to rebuild point cloud")
+
+        layout_id = task.metadata.get("layout_id")
+        layout = self.layouts_by_id.get(layout_id)
+        if layout is None:
+            raise ValueError(f"Layout not found for task metadata: {layout_id}")
+
+        object_mapping: Dict[str, Dict[str, Any]] = {}
+        for obj_info in task.metadata.get("objects", []):
+            placeholder = obj_info.get("placeholder")
+            object_id = obj_info.get("object_id")
+            if placeholder is None or object_id is None:
+                raise ValueError("Task metadata objects must contain placeholder and object_id")
+
+            actual_obj = self.objects_by_id.get(object_id)
+            if actual_obj is None:
+                raise ValueError(f"Object metadata not found for object_id={object_id}")
+            object_mapping[placeholder] = actual_obj
+
+        return self.generators[task.metadata["generator_type"]]._create_point_cloud_from_layout(
+            layout, object_mapping
+        )
 
     def generate(self, task_plan: TaskPlan, num_tasks: int, output_dir: str) -> Dict[str, Any]:
         """

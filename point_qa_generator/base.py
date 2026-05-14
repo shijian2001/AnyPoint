@@ -1,8 +1,16 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
+import hashlib
+import json
+import os
 import numpy as np
 from .metadata import PointCloudMetadata
+from scene_builder.pointcloud_scene_builder import (
+    fit_background_to_layout,
+    get_support_height,
+    transform_object_point_cloud,
+)
 
 
 @dataclass
@@ -32,9 +40,19 @@ class Task:
 class BasePointQAGenerator(ABC):
     """Base class for point cloud QA generators."""
 
-    def __init__(self, metadata: PointCloudMetadata, seed: int = 42, layouts = None):
+    def __init__(
+        self,
+        metadata: PointCloudMetadata,
+        seed: int = 42,
+        layouts=None,
+        background_dir: Optional[str] = None,
+        scene_builder: Optional[Any] = None,
+    ):
         self.metadata = metadata
         self.rng = np.random.RandomState(seed)
+        self.background_dir = background_dir
+        self.background_files = self._scan_backgrounds(background_dir)
+        self.scene_builder = scene_builder
         
         # Support both dict (classified) and list (raw) layouts
         if isinstance(layouts, dict):
@@ -47,6 +65,17 @@ class BasePointQAGenerator(ABC):
         # Validate metadata
         if not self.metadata.objects:
             raise ValueError("Metadata contains no objects")
+
+    @staticmethod
+    def _scan_backgrounds(background_dir: Optional[str]) -> List[str]:
+        if not background_dir or not os.path.isdir(background_dir):
+            return []
+
+        background_files = []
+        for name in sorted(os.listdir(background_dir)):
+            if name.endswith(".npy"):
+                background_files.append(os.path.join(background_dir, name))
+        return background_files
 
     @abstractmethod
     def validate_generator_config(self, config: Dict[str, Any]) -> None:
@@ -108,50 +137,41 @@ class BasePointQAGenerator(ABC):
         Returns:
             Combined scene point cloud (N, 3+)
         """
+        if self.scene_builder is not None:
+            return self.scene_builder.build_point_cloud(layout, object_mapping)
+
         point_clouds = []
+        background = self._load_background(layout, object_mapping)
+        support_y = get_support_height(background)
         
         for obj_spec in layout["objects"]:
             obj_name = obj_spec["name"]
             actual_obj = object_mapping[obj_name]
-            
-            # Load point cloud
+
             pcd = self.metadata.load_point_cloud(actual_obj["object_id"])
-            coords = pcd[:, :3]
-            colors = pcd[:, 3:] if pcd.shape[1] > 3 else np.zeros((len(pcd), 3))
-            
-            # Normalize to [-0.5, 0.5]^3 (AABB)
-            min_coords = coords.min(axis=0)
-            max_coords = coords.max(axis=0)
-            extent = max_coords - min_coords
-            # Avoid division by zero
-            extent = np.where(extent > 1e-6, extent, 1.0)
-            coords = (coords - min_coords) / extent - 0.5
-            
-            # Extract transform parameters
-            position = np.array(obj_spec["position"])
-            rotation = obj_spec.get("rotation", 0)
-            size = np.array(obj_spec["size"])  # Half-extents
-            
-            # Apply transformations: scale -> rotate -> translate
-            transformed = coords * (size * 2)  # Scale to full size
-            
-            # Rotate around Y-axis
-            angle_rad = np.radians(rotation)
-            cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
-            rotation_matrix = np.array([
-                [cos_a, 0, sin_a],
-                [0, 1, 0],
-                [-sin_a, 0, cos_a]
-            ])
-            transformed = transformed @ rotation_matrix.T
-            
-            # Translate to position
-            transformed = transformed + position
-            
-            # Recombine with colors
-            point_clouds.append(np.hstack((transformed, colors)))
-        
+            point_clouds.append(transform_object_point_cloud(pcd, obj_spec, support_y=support_y))
+
+        if background is not None:
+            point_clouds.insert(0, background)
+
         return np.vstack(point_clouds)
+
+    def _load_background(self, layout: Dict, object_mapping: Dict[str, Dict]) -> Optional[np.ndarray]:
+        if not self.background_files:
+            return None
+
+        descriptor = {
+            "layout_id": layout.get("id"),
+            "objects": sorted(
+                (placeholder, actual_obj["object_id"])
+                for placeholder, actual_obj in object_mapping.items()
+            ),
+        }
+        descriptor_json = json.dumps(descriptor, sort_keys=True, ensure_ascii=False)
+        digest = hashlib.sha256(descriptor_json.encode("utf-8")).hexdigest()
+        bg_index = int(digest[:16], 16) % len(self.background_files)
+        background = np.load(self.background_files[bg_index]).astype(np.float32)
+        return fit_background_to_layout(background, layout)
 
     def _compose_options(
         self, 

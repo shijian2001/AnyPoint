@@ -23,7 +23,15 @@ from ..model import *
 from ..constants import DEFAULT_POINT_PATCH_TOKEN, DEFAULT_PT_START_TOKEN, DEFAULT_PT_END_TOKEN
 
 
-def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", device="cuda"):
+def _apply_path_overrides(config, recon_path=None, EVA_path=None):
+    if recon_path is not None:
+        config.vision_tower_path = recon_path
+    if EVA_path is not None:
+        config.EVA_path = EVA_path
+    return config
+
+
+def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", device="cuda", recon_path=None, EVA_path=None):
     kwargs = {"device_map": device_map}
 
     if load_8bit:
@@ -43,7 +51,7 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
     if 'lora' in model_name.lower() and model_base is None:
         warnings.warn('There is `lora` in model name but no `model_base` is provided. If you are loading a LoRA model, please provide the `model_base` argument. Detailed instruction: https://github.com/haotian-liu/LLaVA#launch-a-model-worker-lora-weights-unmerged.')
     if 'lora' in model_name.lower() and model_base is not None:
-        lora_cfg_pretrained = AutoConfig.from_pretrained(model_path)
+        lora_cfg_pretrained = _apply_path_overrides(AutoConfig.from_pretrained(model_path), recon_path, EVA_path)
         tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
         print('Loading LLaVA from base model...')
         model = LlavaLlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, **kwargs)
@@ -83,11 +91,11 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
             if not os.path.isfile(os.path.join(model_path, 'configuration_mpt.py')):
                 shutil.copyfile(os.path.join(model_base, 'configuration_mpt.py'), os.path.join(model_path, 'configuration_mpt.py'))
             tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=True)
-            cfg_pretrained = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+            cfg_pretrained = _apply_path_overrides(AutoConfig.from_pretrained(model_path, trust_remote_code=True), recon_path, EVA_path)
             model = LlavaMPTForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=cfg_pretrained, **kwargs)
         else:
             tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
-            cfg_pretrained = AutoConfig.from_pretrained(model_path)
+            cfg_pretrained = _apply_path_overrides(AutoConfig.from_pretrained(model_path), recon_path, EVA_path)
             model = LlavaLlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=cfg_pretrained, **kwargs)
 
         mm_projector_weights = torch.load(os.path.join(model_path, 'mm_projector.bin'), map_location='cpu')
@@ -95,7 +103,8 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
         model.load_state_dict(mm_projector_weights, strict=False)
     else:
         tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
-        model = LlavaLlamaForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, **kwargs)
+        cfg_pretrained = _apply_path_overrides(AutoConfig.from_pretrained(model_path), recon_path, EVA_path)
+        model = LlavaLlamaForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, config=cfg_pretrained, **kwargs)
 
     mm_use_pt_start_end = getattr(model.config, "mm_use_pt_start_end", False)
     mm_use_pt_patch_token = getattr(model.config, "mm_use_pt_patch_token", True)

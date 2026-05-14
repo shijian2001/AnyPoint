@@ -12,12 +12,12 @@ class EvalConfig:
     Algorithm parameters (see formulation in utility.py):
         budget: Total evaluation budget (B in paper)
         batch_size: Tasks per iteration (K in paper)
-        pool_size: Candidate pool size (N in paper, N >> K)
+        pool_size: Total size of the pre-generated fixed candidate pool
         lambda_explore: Exploration weight (λ in paper, λ ∈ [0,1])
     """
     budget: int                         # B: Total evaluation budget
     batch_size: int                     # K: Batch size per iteration
-    pool_size: int                      # N: Candidate pool size
+    pool_size: int                      # N: Fixed candidate pool size
     lambda_explore: float = 0.2         # λ: Exploration weight
     seed: int = 42
     
@@ -31,6 +31,7 @@ class TaskResult:
     task_id: int
     question: str
     answer: str
+    model_raw_output: str
     model_answer: str
     is_correct: bool
     utility: Optional[float] = None
@@ -40,4 +41,3 @@ class TaskResult:
     
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
-
