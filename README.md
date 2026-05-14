@@ -1,6 +1,7 @@
 # AnyPoint: Programmatically Scaling Point Cloud Instruction Data Generation
 
-A fast, scalable data engine for programmatically synthesizing 3D point cloud instruction datasets with guaranteed ground truth and diverse point cloud scenes
+A fast, scalable data engine for programmatically synthesizing 3D point cloud instruction datasets with guaranteed ground truth and diverse point cloud scenes.
+
 ## Installation
 
 ```bash
@@ -13,321 +14,219 @@ pip install -r requirements.txt
 
 ## Quick Start
 
-### Basic Usage
+### Generate Mixed Dataset (Recommended)
 
 ```python
 from point_qa_generator import PointQAGenerator, TaskPlan
 
-# Initialize generator with layout system
 generator = PointQAGenerator(
-    metadata_file="/path/to/metadata.jsonl",  # Object metadata
-    pcd_dir="/path/to/point_clouds",          # Point cloud directory
-    layouts_file="/path/to/layouts.json",     # Layout definitions
+    metadata_file="/path/to/metadata.jsonl",
+    pcd_dir="/path/to/point_clouds",
+    layouts_file="/path/to/layouts.jsonl",
+    background_dir="/path/to/background",
     seed=42
 )
 
-# Create task plan
+# All 17 types, equally distributed, random 4-6 options
+task_plan = TaskPlan(
+    generator_type=list(generator.generators.keys()),
+    num_options=(4, 6),
+    seed=42
+)
+generator.generate(task_plan, num_tasks=1000, output_dir="./output")
+```
+
+### Single Type
+
+```python
 task_plan = TaskPlan(
     generator_type="what_distance",
-    num_options=4,  # Number of multiple choice options
+    num_options=4,
     seed=42,
     generator_config={"distance_type": "closest"}
 )
-
-# Generate tasks
 generator.generate(task_plan, num_tasks=100, output_dir="./output")
 ```
 
-### Point Cloud Visualization
-
-```python
-from visualizer import PointCloudVisualizer, ColorScheme
-
-viz = PointCloudVisualizer()
-viz.add_point_cloud("./data/scene.npy", "My Scene")
-viz.visualize(ColorScheme.HEIGHT)  # Visualize by height
-```
-
-## Available Generators
-
-### 1. Distance-Based Generators
-
-#### `what_distance`
-**Question Type**: "What is the object that is closest/farthest from the [reference_object]?"
+### Weighted Types
 
 ```python
 task_plan = TaskPlan(
-    generator_type="what_distance",
-    num_options=4,
-    generator_config={"distance_type": "closest"}  # or "farthest"
+    generator_type={
+        "what_distance": 0.3,
+        "what_relation": 0.4,
+        "multi_hop_relation": 0.3
+    },
+    num_options=(4, 6),
+    seed=42
 )
+generator.generate(task_plan, num_tasks=500, output_dir="./output")
 ```
 
-#### `where_distance`  
-**Question Type**: "Where is the object that is closest/farthest from the [reference_object]?"  
-**Answer Options**: Spatial relations from layout generator (e.g., "in front of", "beside", "above")
+### CLI Script
 
-```python
-task_plan = TaskPlan(
-    generator_type="where_distance",
-    num_options=4,
-    generator_config={"distance_type": "farthest"}
-)
+```bash
+# All 17 types, 1000 tasks
+python run_point_qa_gen.py --num-tasks 1000 --output ./output
+
+# Specific types
+python run_point_qa_gen.py --num-tasks 100 --types what_distance what_relation --output ./output
+
+# Weighted types
+python run_point_qa_gen.py --num-tasks 500 --types what_distance:0.4 what_relation:0.3 multi_hop_relation:0.3 --output ./output
+
+# Fixed 4 options with specific config
+python run_point_qa_gen.py --num-tasks 100 --types what_distance --num-options 4 --config distance_type=closest --output ./output
 ```
 
-#### `list_attribute_distance`
-**Question Type**: "List all [attribute]s in the components of the object closest/farthest from [reference_object]."
+## Available Generators (17 Types)
 
-```python
-task_plan = TaskPlan(
-    generator_type="list_attribute_distance",
-    num_options=4,
-    generator_config={"distance_type": "closest"}
-)
-```
+### 1. Distance-Based (4 types)
 
-#### `count_attribute_distance`
-**Question Type**: "How many [attribute]s are in the components of the object closest/farthest from [reference_object]?"
+| Generator | Question Pattern |
+|-----------|-----------------|
+| `what_distance` | "What is the object closest/farthest from the {ref}?" |
+| `where_distance` | "Where is the object closest/farthest from the {ref}?" |
+| `list_attribute_distance` | "List all {attr}s of the object closest/farthest from {ref}." |
+| `count_attribute_distance` | "How many {attr}s does the object closest/farthest from {ref} have?" |
 
-```python
-task_plan = TaskPlan(
-    generator_type="count_attribute_distance",
-    num_options=4,
-    generator_config={"distance_type": "farthest"}
-)
-```
+Config: `{"distance_type": "closest"}` or `{"distance_type": "farthest"}`
 
-### 2. Attribute-Based Generators
+### 2. Attribute-Based (3 types)
 
-#### `what_attribute`
-**Question Type**: "What is the [attribute] of the [component] in the [object]?"
+| Generator | Question Pattern |
+|-----------|-----------------|
+| `what_attribute` | "What is the {attr} of the {component} in the {object}?" |
+| `list_attribute` | "List all {attr}s in the components of the {object}." |
+| `count_attribute` | "How many {attr}s are in the components of the {object}?" |
 
-```python
-task_plan = TaskPlan(
-    generator_type="what_attribute",
-    num_options=4
-)
-```
+Config: none required (attribute sampled randomly from material/color/shape/texture)
 
-#### `list_attribute`
-**Question Type**: "List all [attribute]s in the components of the [object]."
+### 3. Number/Frequency-Based (4 types)
 
-```python
-task_plan = TaskPlan(
-    generator_type="list_attribute",
-    num_options=4
-)
-```
+| Generator | Question Pattern |
+|-----------|-----------------|
+| `count_object` | "How many {object} are in the scene?" |
+| `frequent_object` | "What is the most/least frequent object in the scene?" |
+| `list_attribute_frequent` | "List all {attr}s of the most/least frequent object." |
+| `count_attribute_frequent` | "How many {attr}s does the most/least frequent object have?" |
 
-#### `count_attribute`
-**Question Type**: "How many [attribute]s are in the components of the [object]?"
+Config: `{"frequency_type": "most"}` or `{"frequency_type": "least"}`
 
-```python
-task_plan = TaskPlan(
-    generator_type="count_attribute",
-    num_options=4
-)
-```
+### 4. Size-Based (4 types)
 
-### 3. Number-Based Generators
+| Generator | Question Pattern |
+|-----------|-----------------|
+| `what_size` | "What is the largest/smallest object in the scene?" |
+| `list_attribute_size` | "List all {attr}s of the largest/smallest object." |
+| `count_attribute_size` | "How many {attr}s does the largest/smallest object have?" |
+| `where_size` | "Where is the largest/smallest object relative to {ref}?" |
 
-#### `count_object`
-**Question Type**: "How many [object] in the scene?"
+Config: `{"size_type": "largest"}` or `{"size_type": "smallest"}`
+For `where_size`: also `{"reference_mode": "with_reference"}` or `{"reference_mode": "reference_to_target"}`
 
-```python
-task_plan = TaskPlan(
-    generator_type="count_object",
-    num_options=4
-)
-```
+### 5. Relation-Based (2 types)
 
-#### `frequent_object`
-**Question Type**: "What is the most/least frequent object in the scene?"
+| Generator | Question Pattern |
+|-----------|-----------------|
+| `what_relation` | "What is the object that is {relation} the {ref}?" |
+| `multi_hop_relation` | "What is the object {rel2} the object {rel1} the {anchor}?" |
 
-```python
-task_plan = TaskPlan(
-    generator_type="frequent_object",
-    num_options=4,
-    generator_config={"frequency_type": "most"}  # or "least"
-)
-```
+Config: none required (relation sampled from layout)
 
-#### `list_attribute_frequent`
-**Question Type**: "List all [attribute]s in the components of the most/least frequent object in the scene?"
-
-```python
-task_plan = TaskPlan(
-    generator_type="list_attribute_frequent",
-    num_options=4,
-    generator_config={"frequency_type": "least"}
-)
-```
-
-#### `count_attribute_frequent`
-**Question Type**: "How many [attribute]s are in the components of the most/least frequent object in the scene?"
-
-```python
-task_plan = TaskPlan(
-    generator_type="count_attribute_frequent",
-    num_options=4,
-    generator_config={"frequency_type": "most"}
-)
-```
-
-### 4. Size-Based Generators
-
-#### `what_size`
-**Question Type**: "What is the largest/smallest object in the scene?"
-
-```python
-task_plan = TaskPlan(
-    generator_type="what_size",
-    num_options=4,
-    generator_config={"size_type": "largest"}  # or "smallest"
-)
-```
-
-#### `list_attribute_size`
-**Question Type**: "List all [attribute]s in the components of the largest/smallest object in the scene?"
-
-```python
-task_plan = TaskPlan(
-    generator_type="list_attribute_size",
-    num_options=4,
-    generator_config={"size_type": "smallest"}
-)
-```
-
-#### `count_attribute_size`
-**Question Type**: "How many [attribute]s are in the components of the largest/smallest object in the scene?"
-
-```python
-task_plan = TaskPlan(
-    generator_type="count_attribute_size",
-    num_options=4,
-    generator_config={"size_type": "largest"}
-)
-```
-
-#### `where_size`
-**Question Type**: "Where is the largest/smallest object in the scene?"  
-**Answer Options**: Spatial relations from layout generator (e.g., "in front of", "beside", "above")
-
-```python
-task_plan = TaskPlan(
-    generator_type="where_size",
-    num_options=4,
-    generator_config={
-        "size_type": "largest",
-        "reference_mode": "with_reference"  # "no_reference", "reference_to_target"
-    }
-)
-```
-
-## Configuration Parameters
+## Configuration
 
 ### TaskPlan Parameters
 
-- **`generator_type`** (str): Type of generator to use
-- **`num_options`** (int, 2-6): Number of multiple choice options
-- **`seed`** (int): Random seed for reproducibility
-- **`generator_config`** (dict): Generator-specific configuration
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `generator_type` | `str`, `List[str]`, or `Dict[str, float]` | Generator type(s). Dict values are weights (must sum to 1.0). |
+| `num_options` | `int` or `(int, int)` | Fixed option count (2-6) or random range. |
+| `seed` | `int` | Random seed for reproducibility. |
+| `generator_config` | `Dict` | Generator-specific config. If empty, a random variant is selected. |
 
-### Generator-Specific Configurations
+### Key Design Decisions
 
-| Generator Type | Required Config | Options |
-|---------------|----------------|---------|
-| Distance-based | `distance_type` | `"closest"`, `"farthest"` |
-| Number-based | `frequency_type` | `"most"`, `"least"` |
-| Size-based | `size_type` | `"largest"`, `"smallest"` |
-| Size-based (`where_size`) | `reference_mode` | `"with_reference"`, `"no_reference"`, `"reference_to_target"` |
+- **Distractors from scene**: For What-type questions, all distractors come from objects in the same scene (no out-of-scene shortcuts).
+- **Minimal edit distance**: For List-type questions, distractors differ from the correct answer by exactly 1 element.
+- **6 answerable directions**: Where-type questions only use directions that the coordinate system can compute (left/right/above/below/front/behind).
+- **Answer position balance**: Correct answer position is precisely balanced across all option slots.
+- **Global dedup**: No duplicate questions in output.
+- **Background diversity**: Randomly selected from background pool or no background (uniform probability).
 
-## Important Notes
-
-### 🔴 Critical Warnings
-
-1. **Layout System**: The system uses pre-generated layouts that define object positions, sizes, and spatial relations. Each layout contains 2-9 objects with guaranteed size variations (one largest, one smallest).
-
-2. **Metadata Requirements**: Objects must have component-level attributes (material, color, shape, texture) for attribute-based generators to work properly.
-
-### 📁 Output Structure
+## Output Structure
 
 ```
 output_directory/
-├── pcd/                    # Generated point cloud files
-│   ├── 000000.npy         # Scene point cloud 1
-│   ├── 000001.npy         # Scene point cloud 2
+├── pcd/                    # Generated point cloud scenes
+│   ├── 000000.npy         # Scene point cloud (N, 6): xyz + rgb
+│   ├── 000001.npy
 │   ├── ...
-│   └── metadata.json      # All scenes metadata (layout, objects)
+│   └── metadata.json      # Scene metadata (layout, objects per scene)
 ├── tasks.jsonl            # Question-answer pairs
-└── tasks_info.json        # Generation metadata and statistics
+└── tasks_info.json        # Generation config and statistics
 ```
 
-#### `pcd/metadata.json`
-Contains metadata for all generated scenes:
-```json
-[
-  {
-    "scene_id": 0,
-    "point_cloud": "000000.npy",
-    "layout_id": "layout_0042",
-    "layout_template": "A room with [obj_0] and [obj_1]",
-    "layout_description": "A room with chair and table",
-    "objects": {
-      "count": 7,
-      "details": [
-        {
-          "name": "chair",
-          "object_id": "001df836dd9e46edb196a975e59bb63a",
-          "placeholder": "obj_0"
-        },
-        ...
-      ]
-    }
-  },
-  ...
-]
-```
-
-#### `tasks.jsonl`
-Each line contains one task:
+### `tasks.jsonl`
 ```json
 {
   "question_id": 0,
   "point": "000000.npy",
   "category": "what_distance_closest",
-  "question": "What is the object that is closest from the chair?",
+  "question": "Which object is nearest to the chair?",
   "options": ["table", "lamp", "book", "sofa"],
   "answer": "table"
 }
 ```
-Note: Options are shuffled and answer position is random.
 
-#### `tasks_info.json`
-Generation statistics:
+### `tasks_info.json`
 ```json
 {
   "task_plan": {
-    "generator_type": "what_distance",
-    "num_options": 4,
+    "generator_type": ["what_distance", "what_relation", ...],
+    "num_options": [4, 6],
     "seed": 42,
-    "generator_config": {"distance_type": "closest"}
+    "generator_config": {}
   },
   "generation_stats": {
-    "num_tasks_requested": 100,
-    "num_tasks_generated": 100,
-    "output_directory": "./output"
+    "num_tasks_requested": 1000,
+    "num_tasks_generated": 1000,
+    "output_directory": "./output",
+    "category_distribution": {"what_distance_closest": 60, ...}
   }
 }
 ```
 
-## Future Generators (Based on Layout Relations)
+## Point Cloud Visualization
 
-The layout system provides rich semantic relations between objects, enabling more advanced question types:
+```python
+from visualizer import PointCloudVisualizer, ColorScheme
 
-- **Relation-based What**: "What is the object **on** the table?"
-- **Relation-based Where**: "Where is the chair **relative to** the table?"
-- **Complex Reasoning**: "What is the object that is on the largest object?"
-- **Multi-hop Questions**: "What is beside the object in front of the lamp?"
+viz = PointCloudVisualizer()
+viz.add_point_cloud("./output/pcd/000000.npy", "Scene")
+viz.visualize(ColorScheme.ORIGINAL)
+```
 
-See `layout_generator/constants.py::VALID_RELATIONS` for available spatial relations.
+## Performance
+
+- **Generation speed**: ~5-8 tasks/s (parallel, 17 generator types)
+- **Bottleneck**: Point cloud IO (~130ms per .npy file on cold read)
+- **Parallelism**: ThreadPoolExecutor across generator types (up to 32 workers)
+- **Deferred loading**: Point cloud files are only loaded after all QA logic passes
+
+## Architecture
+
+```
+point_qa_generator/
+├── base.py           # TaskPlan, Task, BasePointQAGenerator
+├── generator.py      # PointQAGenerator (main interface)
+├── metadata.py       # Object metadata loading
+├── scene_builder.py  # Point cloud scene assembly
+├── templates.py      # Question template library
+├── utils.py          # Constants, spatial functions
+├── distance.py       # Distance-based generators
+├── attribute.py      # Attribute-based generators
+├── number.py         # Count/frequency generators
+├── size.py           # Size-based generators
+└── relation.py       # Relation and multi-hop generators
+```
