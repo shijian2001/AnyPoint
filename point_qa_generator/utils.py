@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List
+from typing import Dict, List
 from layout_generator.constants import VALID_RELATIONS
 
 # =============================================================================
@@ -8,6 +8,33 @@ from layout_generator.constants import VALID_RELATIONS
 
 # Attribute types used in generators
 ATTRIBUTES = ["material", "color", "shape", "texture"]
+
+# Directions that can be computed from coordinates via dominant-axis method.
+# Only these should appear as correct answers (and distractors) in where-type questions.
+ANSWERABLE_DIRECTIONS = [
+    "to the left of", "to the right of",
+    "above", "below",
+    "in front of", "behind",
+]
+
+# Semantic groups for spatial relations — relations in the same group are
+# easily confused and should not appear together as answer + distractor.
+RELATION_GROUPS: Dict[str, str] = {
+    "in front of": "directional_z",
+    "behind": "directional_z",
+    "to the left of": "directional_x",
+    "to the right of": "directional_x",
+    "beside": "proximity",
+    "next to": "proximity",
+    "near": "proximity",
+    "far from": "distance",
+    "on": "vertical_contact",
+    "above": "vertical_above",
+    "below": "vertical_below",
+    "under": "vertical_below",
+    "surrounding": "special",
+    "at the center of": "special",
+}
 
 # Number generator configurations: (num_types, count_distribution)
 # Each distribution ensures unique most/least frequencies for number-based questions
@@ -18,7 +45,7 @@ NUMBER_GENERATOR_CONFIGS = {
     6: [(2, [1, 5]), (2, [2, 4]), (3, [1, 2, 3])],
     7: [(2, [2, 5]), (2, [3, 4]), (3, [1, 2, 4])],
     8: [(2, [3, 5]), (3, [1, 2, 5]), (3, [1, 3, 4])],
-    9: [(2, [4, 5]), (3, [1, 2, 6]), (3, [1, 3, 5]), (3, [2, 3, 4]), (4, [1, 2, 2, 4])]
+    9: [(2, [4, 5]), (3, [1, 2, 6]), (3, [1, 3, 5]), (3, [2, 3, 4])],
 }
 
 
@@ -109,17 +136,31 @@ def center_and_scale_point_cloud(point_cloud: np.ndarray, scale_factor: float = 
 
 def translate_point_cloud(point_cloud: np.ndarray, x_offset: float, y_offset: float) -> np.ndarray:
     """Translate point cloud by x and y offsets.
-    
+
     Args:
         point_cloud: Input point cloud array (N, 3+) where first 3 columns are coordinates
         x_offset: Translation in x direction
         y_offset: Translation in y direction
-        
+
     Returns:
         Translated point cloud with same shape as input
     """
     coordinates = point_cloud[:, :3]
     offsets = np.array([x_offset, y_offset, 0])
     translated_coordinates = coordinates + offsets
-    
+
     return np.hstack((translated_coordinates, point_cloud[:, 3:]))
+
+
+# =============================================================================
+# RELATION DISTRACTOR HELPERS
+# =============================================================================
+
+def get_relation_distractors(rng, correct_relation: str, num: int) -> List[str]:
+    """Select distractors from different semantic groups than the correct relation."""
+    correct_group = RELATION_GROUPS.get(correct_relation)
+    candidates = [
+        rel for rel, group in RELATION_GROUPS.items()
+        if group != correct_group and rel != correct_relation
+    ]
+    return rng.choice(candidates, size=min(num, len(candidates)), replace=False).tolist()

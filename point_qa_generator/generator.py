@@ -1,7 +1,8 @@
 import os
 import json
 import hashlib
-from typing import Dict, List, Tuple, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
 from .base import TaskPlan, Task
 from .metadata import PointCloudMetadata
@@ -13,6 +14,7 @@ from .number import (CountObjectGenerator, FrequentObjectGenerator,
                      ListAttributeFrequentGenerator, CountAttributeFrequentGenerator)
 from .size import (WhatSizeGenerator, ListAttributeSizeGenerator,
                    CountAttributeSizeGenerator, WhereSizeGenerator)
+from .relation import WhatRelationGenerator, MultiHopRelationGenerator
 
 
 class PointQAGenerator:
@@ -26,20 +28,13 @@ class PointQAGenerator:
         seed: int = 42,
         background_dir: str = None,
     ):
-        """
-        Initialize Point QA Generator with layout system.
-
-        Args:
-            metadata_file: Path to object metadata JSONL file
-            pcd_dir: Directory containing point cloud .npy files
-            layouts_file: Path to layouts JSON file
-            seed: Random seed
-        """
         self.metadata = PointCloudMetadata(metadata_file, pcd_dir, seed)
         self.metadata_file = metadata_file
         self.pcd_dir = pcd_dir
         self.layouts_file = layouts_file
-        self.background_dir = background_dir or os.path.join(os.path.dirname(os.path.abspath(metadata_file)), "background")
+        self.background_dir = background_dir or os.path.join(
+            os.path.dirname(os.path.abspath(metadata_file)), "background"
+        )
         self.layouts = self._load_layouts(layouts_file)
         self.layouts_by_id = {
             layout.get("id"): layout
@@ -50,45 +45,119 @@ class PointQAGenerator:
             obj["object_id"]: obj
             for obj in self.metadata.objects
         }
-        self.layouts_classified = self._classify_layouts(self.layouts)
         self.rng = np.random.RandomState(seed)
-        
+
+        gen_kwargs = dict(background_dir=self.background_dir)
         self.generators = {
-            # Distance-based generators
-            "what_distance": WhatDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-            "where_distance": WhereDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-            "list_attribute_distance": ListAttributeDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-            "count_attribute_distance": CountAttributeDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-
-            # Attribute-based generators
-            "what_attribute": WhatAttributeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-            "list_attribute": ListAttributeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-            "count_attribute": CountAttributeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-
-            # Number-based generators
-            "count_object": CountObjectGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-            "frequent_object": FrequentObjectGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-            "list_attribute_frequent": ListAttributeFrequentGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-            "count_attribute_frequent": CountAttributeFrequentGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-
-            # Size-based generators
-            "what_size": WhatSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-            "list_attribute_size": ListAttributeSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-            "count_attribute_size": CountAttributeSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
-            "where_size": WhereSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir)
+            "what_distance": WhatDistanceGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "where_distance": WhereDistanceGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "list_attribute_distance": ListAttributeDistanceGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "count_attribute_distance": CountAttributeDistanceGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "what_attribute": WhatAttributeGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "list_attribute": ListAttributeGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "count_attribute": CountAttributeGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "count_object": CountObjectGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "frequent_object": FrequentObjectGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "list_attribute_frequent": ListAttributeFrequentGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "count_attribute_frequent": CountAttributeFrequentGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "what_size": WhatSizeGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "list_attribute_size": ListAttributeSizeGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "count_attribute_size": CountAttributeSizeGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "where_size": WhereSizeGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "what_relation": WhatRelationGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
+            "multi_hop_relation": MultiHopRelationGenerator(self.metadata, seed, self.layouts, **gen_kwargs),
         }
 
+    GENERATOR_VARIANTS: Dict[str, List[Dict[str, Any]]] = {
+        "what_distance": [
+            {"distance_type": "closest"},
+            {"distance_type": "farthest"},
+        ],
+        "where_distance": [
+            {"distance_type": "closest"},
+            {"distance_type": "farthest"},
+        ],
+        "list_attribute_distance": [
+            {"distance_type": "closest"},
+            {"distance_type": "farthest"},
+        ],
+        "count_attribute_distance": [
+            {"distance_type": "closest"},
+            {"distance_type": "farthest"},
+        ],
+        "what_attribute": [{}],
+        "list_attribute": [{}],
+        "count_attribute": [{}],
+        "count_object": [{}],
+        "frequent_object": [
+            {"frequency_type": "most"},
+            {"frequency_type": "least"},
+        ],
+        "list_attribute_frequent": [
+            {"frequency_type": "most"},
+            {"frequency_type": "least"},
+        ],
+        "count_attribute_frequent": [
+            {"frequency_type": "most"},
+            {"frequency_type": "least"},
+        ],
+        "what_size": [
+            {"size_type": "largest"},
+            {"size_type": "smallest"},
+        ],
+        "list_attribute_size": [
+            {"size_type": "largest"},
+            {"size_type": "smallest"},
+        ],
+        "count_attribute_size": [
+            {"size_type": "largest"},
+            {"size_type": "smallest"},
+        ],
+        "where_size": [
+            {"size_type": "largest", "reference_mode": "with_reference"},
+            {"size_type": "smallest", "reference_mode": "with_reference"},
+            {"size_type": "largest", "reference_mode": "reference_to_target"},
+            {"size_type": "smallest", "reference_mode": "reference_to_target"},
+        ],
+        "what_relation": [{}],
+        "multi_hop_relation": [{}],
+    }
+
+
+    @staticmethod
+    def _allocate_evenly(
+        total: int, types: List[str], rng: np.random.RandomState
+    ) -> Dict[str, int]:
+        base = total // len(types)
+        remainder = total % len(types)
+        counts = {t: base for t in types}
+        bonus_types = rng.choice(types, size=remainder, replace=False)
+        for t in bonus_types:
+            counts[t] += 1
+        return counts
+
+    @staticmethod
+    def _allocate_by_weights(
+        total: int, types: List[str], weights: Dict[str, float]
+    ) -> Dict[str, int]:
+        raw = {t: weights[t] * total for t in types}
+        counts = {t: int(v) for t, v in raw.items()}
+        remainder = total - sum(counts.values())
+        fractional = sorted(types, key=lambda t: raw[t] - counts[t], reverse=True)
+        for t in fractional[:remainder]:
+            counts[t] += 1
+        return counts
+
     def get_source_signature(self) -> Dict[str, Any]:
-        """Return a stable signature describing the synthesis inputs."""
         return {
             "metadata_file": self._file_signature(self.metadata_file),
             "layouts_file": self._file_signature(self.layouts_file),
             "pcd_dir": self._directory_signature(self.pcd_dir),
-            "background_dir": self._directory_signature(self.background_dir) if self.background_dir and os.path.isdir(self.background_dir) else None,
+            "background_dir": self._directory_signature(self.background_dir)
+            if self.background_dir and os.path.isdir(self.background_dir) else None,
         }
 
     def get_source_signature_hash(self) -> str:
-        """Hash of the synthesis input signature for quick equality checks."""
         signature_json = json.dumps(self.get_source_signature(), sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(signature_json.encode("utf-8")).hexdigest()
 
@@ -114,144 +183,25 @@ class PointQAGenerator:
                     "size": stat.st_size,
                     "mtime_ns": stat.st_mtime_ns,
                 })
-
         return {
             "path": os.path.abspath(path),
             "files": entries,
         }
-    
+
     def _load_layouts(self, layouts_file: str) -> List[Dict]:
-        """Load layouts from JSON file.
-        
-        Args:
-            layouts_file: Path to layouts JSON file
-            
-        Returns:
-            List of layout dictionaries
-        """
+        """Load layouts from JSON or JSONL file."""
         with open(layouts_file, 'r', encoding='utf-8') as f:
-            layouts = json.load(f)
-        return layouts
-    
-    def _classify_layouts(self, layouts: List[Dict]) -> Dict[str, List[Dict]]:
-        """Classify layouts by generator requirements.
-        
-        Args:
-            layouts: List of all layouts
-            
-        Returns:
-            Dictionary with classified layouts:
-                - 'standard': Layouts with 3-9 objects (most generators)
-                - 'special': Layouts with 3-9 objects (WhatDistance, Number generators)
-                - 'all': All layouts
-        """
-        classified = {
-            'standard': [],
-            'special': [],
-            'all': layouts
-        }
-        
-        for layout in layouts:
-            n_objects = len(layout["objects"])
-            
-            # Most generators need 3-9 objects
-            if 3 <= n_objects <= 9:
-                classified['standard'].append(layout)
-            
-            # Special generators (WhatDistance, Number) need 3-9 objects
-            if 3 <= n_objects <= 9:
-                classified['special'].append(layout)
-        
-        # Validate requirements
-        if not classified['special']:
-            print("Warning: No layouts with 3-9 objects found. Special generators may fail.")
-        if not classified['standard']:
-            raise ValueError("No layouts with at least 3 objects found.")
-        
-        return classified
-    
-    def _sample_layout_with_mapping(
-        self, 
-        task_plan: TaskPlan,
-        max_attempts: int = 100
-    ) -> Tuple[Dict, Dict[str, Dict]]:
-        """Sample a layout and map placeholders to actual objects.
-        
-        Randomly samples a layout, then randomly maps each placeholder 
-        (obj_0, obj_1, ...) to an actual object from metadata. Checks
-        compatibility with the generator type.
-        
-        Args:
-            task_plan: Task configuration containing generator type
-            max_attempts: Maximum retry attempts if compatibility fails
-            
-        Returns:
-            Tuple of (layout, object_mapping)
-            
-        Raises:
-            RuntimeError: If no compatible layout found after max_attempts
-        """
-        for _ in range(max_attempts):
-            # Sample a random layout
-            layout = self.rng.choice(self.layouts)
-            
-            # Map placeholders to actual objects
-            num_objects = len(layout["objects"])
-            sampled_objects = self.rng.choice(
-                self.metadata.objects, 
-                size=num_objects, 
-                replace=False
-            )
-            
-            object_mapping = {
-                layout["objects"][i]["name"]: sampled_objects[i]
-                for i in range(num_objects)
-            }
-            
-            # Check compatibility
-            if self._is_layout_compatible(task_plan.generator_type, layout, object_mapping):
-                return layout, object_mapping
-        
-        raise RuntimeError(
-            f"Failed to find compatible layout after {max_attempts} attempts "
-            f"for generator type: {task_plan.generator_type}"
-        )
-    
-    def _is_layout_compatible(
-        self, 
-        generator_type: str,
-        layout: Dict,
-        object_mapping: Dict[str, Dict]
-    ) -> bool:
-        """Check if layout and object mapping are compatible with generator.
-        
-        Compatibility rules:
-        - Attribute-based: At least one object must have components with attributes
-        - Distance/Size-based: At least 3 objects required (guaranteed by layout)
-        - Number-based: Always compatible
-        
-        Args:
-            generator_type: Type of generator (e.g., "what_attribute")
-            layout: Layout dictionary
-            object_mapping: Mapping from placeholders to actual objects
-            
-        Returns:
-            True if compatible, False otherwise
-        """
-        # Attribute-based generators need objects with component attributes
-        if "attribute" in generator_type:
-            for actual_obj in object_mapping.values():
-                if self.metadata.has_components_with_attribute(actual_obj, "material"):
-                    return True
-            return False
-        
-        # Distance/size-based generators need at least 3 objects
-        # (layouts guarantee this, but check for safety)
-        if "distance" in generator_type or "size" in generator_type:
-            return len(layout["objects"]) >= 3
-        
-        # Number-based generators are always compatible
-        return True
+            first_char = f.read(1)
+            f.seek(0)
+            if first_char == '[':
+                return json.load(f)
+            else:
+                layouts = []
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        layouts.append(json.loads(line))
+                return layouts
 
     def materialize_point_cloud(self, task: Task) -> np.ndarray:
         """Rebuild a synthesized scene point cloud from task metadata."""
@@ -280,46 +230,121 @@ class PointQAGenerator:
         )
 
     def generate(self, task_plan: TaskPlan, num_tasks: int, output_dir: str) -> Dict[str, Any]:
+        """Generate QA tasks and save to output directory.
+
+        Unified interface: TaskPlan.generator_type can be a single str,
+        a list of str (equal weight), or a dict of str->float (weighted).
+        generator_config can be omitted for random variant selection.
+        num_options can be int (fixed) or (min, max) tuple (random per batch).
         """
-        Generate QA tasks and save to output directory.
+        rng = np.random.RandomState(task_plan.seed)
 
-        Args:
-            task_plan: Task configuration
-            num_tasks: Number of tasks to generate
-            output_dir: Output directory path
+        gen_types = task_plan.resolve_generator_types()
+        for gt in gen_types:
+            if gt not in self.generators:
+                raise ValueError(f"Unknown generator type: {gt}")
 
-        Returns:
-            Dictionary containing generation statistics
-        """
-        if task_plan.generator_type not in self.generators:
-            raise ValueError(f"Unknown generator type: {task_plan.generator_type}")
+        weights = task_plan.resolve_weights()
+        if weights:
+            counts = self._allocate_by_weights(num_tasks, gen_types, weights)
+        else:
+            counts = self._allocate_evenly(num_tasks, gen_types, rng)
 
-        generator = self.generators[task_plan.generator_type]
+        # Build resolved plans for each generator type
+        plans_and_counts: List[Tuple[str, TaskPlan, int]] = []
+        for gen_type in gen_types:
+            n = counts[gen_type]
+            if n == 0:
+                continue
 
+            if task_plan.generator_config:
+                config = task_plan.generator_config
+            else:
+                variants = self.GENERATOR_VARIANTS[gen_type]
+                config = variants[rng.randint(len(variants))]
+
+            num_options = task_plan.resolve_num_options(rng)
+            resolved_plan = TaskPlan(
+                generator_type=gen_type,
+                num_options=num_options,
+                seed=task_plan.seed,
+                generator_config=config,
+            )
+            plans_and_counts.append((gen_type, resolved_plan, n))
+
+        # Generate in parallel across generator types
+        all_results: List[Tuple[Task, np.ndarray, str]] = []
+        seen_questions: set = set()
+
+        def _run_generator(gen_type, plan, count):
+            generator = self.generators[gen_type]
+            return gen_type, plan, generator.generate_tasks(plan, count)
+
+        with ThreadPoolExecutor(max_workers=min(len(plans_and_counts), 32)) as pool:
+            futures = {
+                pool.submit(_run_generator, gt, plan, n): gt
+                for gt, plan, n in plans_and_counts
+            }
+            for future in as_completed(futures):
+                gen_type, plan, results = future.result()
+                category = self._build_category(plan)
+                for task, pc in results:
+                    if task.question not in seen_questions:
+                        seen_questions.add(task.question)
+                        all_results.append((task, pc, category))
+
+        # If global dedup reduced count below target, fill from random generators
+        while len(all_results) < num_tasks:
+            fill_type = gen_types[rng.randint(len(gen_types))]
+            variants = self.GENERATOR_VARIANTS[fill_type]
+            config = variants[rng.randint(len(variants))]
+            num_options = task_plan.resolve_num_options(rng)
+            fill_plan = TaskPlan(
+                generator_type=fill_type,
+                num_options=num_options,
+                seed=task_plan.seed + len(all_results),
+                generator_config=config,
+            )
+            generator = self.generators[fill_type]
+            results = generator.generate_tasks(fill_plan, num_tasks - len(all_results))
+            category = self._build_category(fill_plan)
+            for task, pc in results:
+                if task.question not in seen_questions:
+                    seen_questions.add(task.question)
+                    all_results.append((task, pc, category))
+                    if len(all_results) >= num_tasks:
+                        break
+
+        all_results = all_results[:num_tasks]
+
+        # Shuffle order
+        rng.shuffle(all_results)
+
+        # Balance answer positions (grouped by num_options)
+        self._balance_positions_inplace(all_results, rng)
+
+        # Save
         os.makedirs(output_dir, exist_ok=True)
         pcd_dir = os.path.join(output_dir, "pcd")
         os.makedirs(pcd_dir, exist_ok=True)
 
-        task_results = generator.generate_tasks(task_plan, num_tasks)
-
         task_records = []
         all_scene_metadata = []
-        
-        for i, (task, point_cloud) in enumerate(task_results):
-            pcd_path = os.path.join(pcd_dir, task.point)
-            np.save(pcd_path, point_cloud)
 
-            # Collect scene metadata
+        for i, (task, point_cloud, category) in enumerate(all_results):
+            task.point = f"{i:06d}.npy"
+            np.save(os.path.join(pcd_dir, task.point), point_cloud)
+
             if task.metadata:
-                # Fill placeholders in layout description
                 layout_template = task.metadata.get("layout_description", "")
                 layout_description = layout_template
                 for obj_info in task.metadata.get("objects", []):
                     placeholder = "[" + obj_info["placeholder"] + "]"
-                    obj_name = obj_info["name"]
-                    layout_description = layout_description.replace(placeholder, obj_name)
-                
-                scene_metadata = {
+                    layout_description = layout_description.replace(
+                        placeholder, obj_info["name"]
+                    )
+
+                all_scene_metadata.append({
                     "scene_id": i,
                     "point_cloud": task.point,
                     "layout_id": task.metadata.get("layout_id"),
@@ -329,23 +354,19 @@ class PointQAGenerator:
                         "count": len(task.metadata.get("objects", [])),
                         "details": task.metadata.get("objects", [])
                     }
-                }
-                all_scene_metadata.append(scene_metadata)
+                })
 
-            task_record = {
+            task_records.append({
                 "question_id": i,
                 "point": task.point,
-                "category": f"{task_plan.generator_type}_{task_plan.generator_config.get('distance_type', '')}",
+                "category": category,
                 "question": task.question,
                 "options": task.options,
-                "answer": task.answer
-            }
-            task_records.append(task_record)
+                "answer": task.answer,
+            })
 
-        # Save all scene metadata to single file
         if all_scene_metadata:
-            metadata_file = os.path.join(pcd_dir, "metadata.json")
-            with open(metadata_file, 'w', encoding='utf-8') as f:
+            with open(os.path.join(pcd_dir, "metadata.json"), 'w', encoding='utf-8') as f:
                 json.dump(all_scene_metadata, f, indent=2, ensure_ascii=False)
 
         tasks_file = os.path.join(output_dir, "tasks.jsonl")
@@ -353,27 +374,103 @@ class PointQAGenerator:
             for record in task_records:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
+        from collections import Counter
+        category_counts = dict(Counter(r["category"] for r in task_records))
+
         task_info = {
             "task_plan": {
                 "generator_type": task_plan.generator_type,
                 "num_options": task_plan.num_options,
                 "seed": task_plan.seed,
-                "generator_config": task_plan.generator_config
+                "generator_config": task_plan.generator_config,
             },
             "generation_stats": {
                 "num_tasks_requested": num_tasks,
                 "num_tasks_generated": len(task_records),
-                "output_directory": output_dir
+                "output_directory": output_dir,
+                "category_distribution": category_counts,
             }
         }
 
-        task_info_file = os.path.join(output_dir, "tasks_info.json")
-        with open(task_info_file, 'w', encoding='utf-8') as f:
+        with open(os.path.join(output_dir, "tasks_info.json"), 'w', encoding='utf-8') as f:
             json.dump(task_info, f, indent=2, ensure_ascii=False)
 
         print(f"Generated {len(task_records)} tasks:")
         print(f"  Tasks file: {tasks_file}")
         print(f"  Point clouds: {pcd_dir}")
-        print(f"  Task info: {task_info_file}")
+        if len(category_counts) > 1:
+            print(f"  Categories: {len(category_counts)}")
 
         return task_info
+
+    def _balance_positions_inplace(
+        self,
+        task_results: List[Tuple[Task, np.ndarray, str]],
+        rng: np.random.RandomState,
+    ) -> None:
+        """Balance answer positions grouped by num_options."""
+        from collections import defaultdict
+
+        groups: Dict[int, List[int]] = defaultdict(list)
+        for i, (task, _, _) in enumerate(task_results):
+            groups[len(task.options)].append(i)
+
+        for num_options, indices in groups.items():
+            n = len(indices)
+            positions = []
+            for pos in range(num_options):
+                count = n // num_options + (1 if pos < n % num_options else 0)
+                positions.extend([pos] * count)
+            rng.shuffle(positions)
+
+            for idx, pos in zip(indices, positions):
+                task = task_results[idx][0]
+                task.options = self._place_answer_at_position(
+                    rng, task.answer, task.options, pos
+                )
+
+    @staticmethod
+    def _build_category(task_plan: TaskPlan) -> str:
+        """Build a human-readable category string from the task plan."""
+        parts = [task_plan.generator_type]
+        for key in ("distance_type", "frequency_type", "size_type", "reference_mode"):
+            val = task_plan.generator_config.get(key)
+            if val:
+                parts.append(val)
+        return "_".join(parts)
+
+    def _balance_answer_positions(
+        self,
+        task_results: List[Tuple[Task, np.ndarray]],
+        task_plan: TaskPlan,
+    ) -> List[Tuple[Task, np.ndarray]]:
+        """Ensure correct answer appears at each position equally often."""
+        num_tasks = len(task_results)
+        num_options = task_plan.num_options
+
+        # Build a perfectly balanced position assignment
+        positions = []
+        for pos in range(num_options):
+            count = num_tasks // num_options + (1 if pos < num_tasks % num_options else 0)
+            positions.extend([pos] * count)
+        self.rng.shuffle(positions)
+
+        result = []
+        for (task, pc), pos in zip(task_results, positions):
+            task.options = self._place_answer_at_position(
+                self.rng, task.answer, task.options, pos
+            )
+            result.append((task, pc))
+        return result
+
+    @staticmethod
+    def _place_answer_at_position(
+        rng: np.random.RandomState,
+        correct_answer: str,
+        options: List[str],
+        target_pos: int,
+    ) -> List[str]:
+        """Rearrange options so correct_answer sits at target_pos."""
+        distractors = [o for o in options if o != correct_answer]
+        rng.shuffle(distractors)
+        return distractors[:target_pos] + [correct_answer] + distractors[target_pos:]

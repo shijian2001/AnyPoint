@@ -181,6 +181,8 @@ class TaskPool:
             ("count_attribute_size", {"size_type": "smallest"}),
             ("where_size", {"size_type": "largest", "reference_mode": "with_reference"}),
             ("where_size", {"size_type": "smallest", "reference_mode": "with_reference"}),
+            ("what_relation", {}),
+            ("multi_hop_relation", {}),
         ]
 
         task_plans: List[TaskPlan] = []

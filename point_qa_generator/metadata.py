@@ -19,7 +19,9 @@ class PointCloudMetadata:
         self.jsonl_file = jsonl_file
         self.pcd_dir = pcd_dir
         self.rng = np.random.RandomState(seed)
-        self.attributes_file = "./data/metadata/attributes.json"
+        self.attributes_file = os.path.join(
+            os.path.dirname(os.path.abspath(jsonl_file)), "attributes_cache.json"
+        )
         self._load_metadata()
         self._load_or_create_attributes()
 

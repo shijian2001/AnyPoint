@@ -327,17 +327,17 @@ class DynamicEvaluator:
         print(f"📁 {hard_dir}/ ({len(self.E_tasks)} hard tasks)")
     
     def _infer_category(self, task: Task) -> str:
-        """Get category from task metadata (generator_type + config)."""
+        """Build category string from task metadata, matching generator output."""
         if task.metadata:
             gen_type = task.metadata.get('generator_type', '')
             config = task.metadata.get('generator_config', {})
-            
             if gen_type:
-                # Construct category same as generator.py L249
-                dist_type = config.get('distance_type', '')
-                return f"{gen_type}_{dist_type}" if dist_type else gen_type
-        
-        # Fallback for tasks without metadata (shouldn't happen)
+                parts = [gen_type]
+                for key in ("distance_type", "frequency_type", "size_type", "reference_mode"):
+                    val = config.get(key)
+                    if val:
+                        parts.append(val)
+                return "_".join(parts)
         return "unknown"
     
     def _print_header(self):

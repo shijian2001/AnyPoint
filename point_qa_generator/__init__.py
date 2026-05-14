@@ -1,13 +1,12 @@
 from .scene_builder import (
     build_scene_point_cloud,
-    estimate_background_support_y,
     estimate_usable_background_bounds,
     fit_background_to_layout,
     get_support_height,
     transform_object_point_cloud,
 )
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "PointQAGenerator",
@@ -28,8 +27,9 @@ __all__ = [
     "ListAttributeSizeGenerator",
     "CountAttributeSizeGenerator",
     "WhereSizeGenerator",
+    "WhatRelationGenerator",
+    "MultiHopRelationGenerator",
     "build_scene_point_cloud",
-    "estimate_background_support_y",
     "estimate_usable_background_bounds",
     "fit_background_to_layout",
     "get_support_height",
@@ -40,15 +40,12 @@ __all__ = [
 def __getattr__(name: str):
     if name == "PointQAGenerator":
         from .generator import PointQAGenerator
-
         return PointQAGenerator
     if name == "TaskPlan":
         from .base import TaskPlan
-
         return TaskPlan
     if name == "PointCloudMetadata":
         from .metadata import PointCloudMetadata
-
         return PointCloudMetadata
     if name in {
         "WhatDistanceGenerator",
@@ -62,7 +59,6 @@ def __getattr__(name: str):
             WhatDistanceGenerator,
             WhereDistanceGenerator,
         )
-
         return {
             "WhatDistanceGenerator": WhatDistanceGenerator,
             "WhereDistanceGenerator": WhereDistanceGenerator,
@@ -75,7 +71,6 @@ def __getattr__(name: str):
         "CountAttributeGenerator",
     }:
         from .attribute import CountAttributeGenerator, ListAttributeGenerator, WhatAttributeGenerator
-
         return {
             "WhatAttributeGenerator": WhatAttributeGenerator,
             "ListAttributeGenerator": ListAttributeGenerator,
@@ -93,7 +88,6 @@ def __getattr__(name: str):
             FrequentObjectGenerator,
             ListAttributeFrequentGenerator,
         )
-
         return {
             "CountObjectGenerator": CountObjectGenerator,
             "FrequentObjectGenerator": FrequentObjectGenerator,
@@ -112,11 +106,16 @@ def __getattr__(name: str):
             WhatSizeGenerator,
             WhereSizeGenerator,
         )
-
         return {
             "WhatSizeGenerator": WhatSizeGenerator,
             "ListAttributeSizeGenerator": ListAttributeSizeGenerator,
             "CountAttributeSizeGenerator": CountAttributeSizeGenerator,
             "WhereSizeGenerator": WhereSizeGenerator,
+        }[name]
+    if name in {"WhatRelationGenerator", "MultiHopRelationGenerator"}:
+        from .relation import MultiHopRelationGenerator, WhatRelationGenerator
+        return {
+            "WhatRelationGenerator": WhatRelationGenerator,
+            "MultiHopRelationGenerator": MultiHopRelationGenerator,
         }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
