@@ -26,8 +26,8 @@ class DistanceGenerator(BasePointQAGenerator):
 class WhatDistanceGenerator(DistanceGenerator):
     """Generator for 'What is the object that is closest/farthest from the {reference_object}?' questions."""
 
-    def __init__(self, metadata, seed: int = 42, layouts = None, background_dir: str = None, scene_builder = None):
-        super().__init__(metadata, seed, layouts, background_dir=background_dir, scene_builder=scene_builder)
+    def __init__(self, metadata, seed: int = 42, layouts = None, background_dir: str = None):
+        super().__init__(metadata, seed, layouts, background_dir=background_dir)
         
         # Use 'special' layouts (3-9 objects) for sufficient scene distractors
         if self.layouts_by_type:

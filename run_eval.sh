@@ -1,69 +1,120 @@
 #!/bin/bash
 set -e
 
-# Expose physical GPUs here; --devices uses logical ids after this remapping.
-# Example for two GPUs: CUDA_VISIBLE_DEVICES=6,7 and --devices cuda:0,cuda:1.
-export CUDA_VISIBLE_DEVICES=2,3
+export CUDA_VISIBLE_DEVICES=0
 export HF_ENDPOINT=https://hf-mirror.com
-export SENTENCE_TRANSFORMERS_HOME=/home/wangxingjian/model/sentence_transformers
+export SENTENCE_TRANSFORMERS_HOME=/model/sentence_transformers
 
-# ShapeLLM dynamic eval
-# python /home/wangxingjian/AnyPoint/run_dynamic_eval.py \
-#   --metadata /home/wangxingjian/data/texverse/metadata.jsonl \
-#   --pcd-dir /home/wangxingjian/data/texverse/points_npy \
-#   --layouts /home/wangxingjian/AnyPoint/outputs_gpt_oss/layouts.json \
+
+# ShapeLLM
+# python3 /AnyPoint/compare_eval_strategies.py \
+#   --metadata /data/texverse/metadata.jsonl \
+#   --pcd-dir /data/texverse/points_npy \
+#   --background-dir /data/texverse/background \
+#   --layouts /AnyPoint/outputs_gpt_oss/layouts.json \
 #   --model shapellm \
-#   --test-ckpt "${SHAPELLM_CKPT}" \
-#   --recon-path "${SHAPELLM_RECON}" \
-#   --EVA-path "${SHAPELLM_EVA}" \
-#   --output ./output/shapellm_dyn \
-#   --budget 50 \
-#   --batch-size 10 \
-#   --pool-size 200 \
-#   --lambda-explore 0.2
-
-# PointLLM dynamic eval
-# python /home/wangxingjian/AnyPoint/run_dynamic_eval.py \
-#   --metadata /home/wangxingjian/data/texverse/metadata.jsonl \
-#   --pcd-dir /home/wangxingjian/data/texverse/points_npy \
-#   --layouts /home/wangxingjian/AnyPoint/outputs_gpt_oss/layouts.json \
-#   --model pointllm \
-#   --checkpoint /home/wangxingjian/model/PointLLM_7B_v1.2 \
-#   --output ./output/pointllm_dyn \
-#   --budget 50 \
-#   --batch-size 10 \
-#   --pool-size 200 \
-#   --lambda-explore 0.2
-
-# ShapeLLM compare random vs dynamic
-# python3 compare_eval_strategies.py \
-#   --metadata /home/wangxingjian/data/texverse/metadata.jsonl \
-#   --pcd-dir /home/wangxingjian/data/texverse/points_npy \
-#   --background_dir /home/wangxingjian/data/texverse/background \
-#   --layouts /home/wangxingjian/AnyPoint/outputs_gpt_oss/layouts.json \
-#   --model shapellm \
-#   --test-ckpt /home/wangxingjian/model/ShapeLLM_7B_general_v1.0 \
-#   --recon-path /home/wangxingjian/PointQA_Eval/checkpoints/recon/large.pth \
-#   --EVA-path /home/wangxingjian/model/eva_large_patch14_336.in22k_ft_in22k_in1k/model.safetensors \
-#   --output /home/wangxingjian/AnyPoint/output/compare_shapellm \
-#   --devices cuda:0,cuda:1 \
+#   --test-ckpt /model/ShapeLLM_7B_general_v1.0 \
+#   --recon-path /PointQA_Eval/checkpoints/recon/large.pth \
+#   --EVA-path /model/eva_large_patch14_336.in22k_ft_in22k_in1k/model.safetensors \
+#   --output /AnyPoint/output/compare_shapellm \
+#   --devices cuda:0 \
 #   --budget 100 \
 #   --batch-size 10 \
 #   --pool-size 1000 \
-#   --pool-cache-dir /home/wangxingjian/AnyPoint/output/pointllm_dyn \
+#   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
 #   --lambda-explore 0.2
 
-python3 compare_eval_strategies.py \
-  --metadata /home/wangxingjian/data/texverse/metadata.jsonl \
-  --pcd-dir /home/wangxingjian/data/texverse/points_npy \
-  --background_dir /home/wangxingjian/data/texverse/background \
-  --layouts /home/wangxingjian/AnyPoint/outputs_gpt_oss/layouts.json \
+# PointLLM
+python3 /AnyPoint/compare_eval_strategies.py \
+  --metadata /data/texverse/metadata.jsonl \
+  --pcd-dir /data/texverse/points_npy \
+  --background-dir /data/texverse/background \
+  --layouts /AnyPoint/outputs_gpt_oss/layouts.json \
   --model pointllm \
-  --checkpoint /home/wangxingjian/model/PointLLM_7B_v1.2 \
-  --output /home/wangxingjian/AnyPoint/output/compare_pointllm \
-  --devices cuda:0,cuda:1 \
+  --checkpoint /model/PointLLM_7B_v1.2 \
+  --output /AnyPoint/output/compare_pointllm \
+  --devices cuda:0 \
   --budget 100 \
   --batch-size 10 \
   --pool-size 1000 \
-  --pool-cache-dir /home/wangxingjian/AnyPoint/output/pointllm_dyn/task_pool_cache \
+  --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
   --lambda-explore 0.2
+
+# OneLLM
+# python3 /AnyPoint/compare_eval_strategies.py \
+#   --metadata /data/texverse/metadata.jsonl \
+#   --pcd-dir /data/texverse/points_npy \
+#   --background-dir /data/texverse/background \
+#   --layouts /AnyPoint/outputs_gpt_oss/layouts.json \
+#   --model onellm \
+#   --checkpoint /model/OneLLM-7B/consolidated.00-of-01.pth \
+#   --clip-pretrained-path /model/vit_large_patch14_clip_224/open_clip_pytorch_model.bin \
+#   --point-format xyzrgb \
+#   --offline true \
+#   --output /AnyPoint/output/compare_onellm \
+#   --devices cuda:0 \
+#   --budget 100 \
+#   --batch-size 10 \
+#   --pool-size 1000 \
+#   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
+#   --lambda-explore 0.2
+
+# MiniGPT-3D
+# python3 /AnyPoint/compare_eval_strategies.py \
+#   --metadata /data/texverse/metadata.jsonl \
+#   --pcd-dir /data/texverse/points_npy \
+#   --background-dir /data/texverse/background \
+#   --layouts /AnyPoint/outputs_gpt_oss/layouts.json \
+#   --model minigpt3d \
+#   --cfg-path /PointQA_Eval/models/dependence/minigpt3d/eval_configs/benchmark_evaluation_paper.yaml \
+#   --output /AnyPoint/output/compare_minigpt3d \
+#   --devices cuda:0 \
+#   --budget 100 \
+#   --batch-size 10 \
+#   --pool-size 1000 \
+#   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
+#   --lambda-explore 0.2
+
+# PointAlign
+# python3 /AnyPoint/compare_eval_strategies.py \
+#   --metadata /data/texverse/metadata.jsonl \
+#   --pcd-dir /data/texverse/points_npy \
+#   --background-dir /data/texverse/background \
+#   --layouts /AnyPoint/outputs_gpt_oss/layouts.json \
+#   --model pointalign \
+#   --cfg-path /PointQA_Eval/models/dependence/pointalign/eval_configs/benchmark_evaluation_paper.yaml \
+#   --weights-root /model/pointalign \
+#   --llama-model-path /model/pointalign/Phi_2 \
+#   --bert-base-uncased-path /model/pointalign/bert-base-uncased \
+#   --pc-encoder-path /model/pointalign/pc_encoder/point_model.pth \
+#   --pretrain-ckpt /model/pointalign/pointalign/pretrain.pth \
+#   --finetune-ckpt /model/pointalign/pointalign/finetune.pth \
+#   --qformer-pretrained-path /model/pointalign/blip2_pretrained_flant5xxl.pth \
+#   --output /AnyPoint/output/compare_pointalign \
+#   --devices cuda:0 \
+#   --budget 100 \
+#   --batch-size 10 \
+#   --pool-size 1000 \
+#   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
+#   --lambda-explore 0.2
+
+# GreenPLM
+# python3 /AnyPoint/compare_eval_strategies.py \
+#   --metadata /data/texverse/metadata.jsonl \
+#   --pcd-dir /data/texverse/points_npy \
+#   --background-dir /data/texverse/background \
+#   --layouts /AnyPoint/outputs_gpt_oss/layouts.json \
+#   --model greenplm \
+#   --model-path /PointQA_Eval/cankao/GreenPLM/lava-vicuna_2024_4_Phi-3-mini-4k-instruct \
+#   --lora-path /PointQA_Eval/cankao/GreenPLM/release/paper/weight/stage_3 \
+#   --pretrain-mm-mlp-adapter /PointQA_Eval/cankao/GreenPLM/release/paper/weight/stage_3/non_lora_trainables.bin \
+#   --pc-ckpt-path /PointQA_Eval/cankao/GreenPLM/pretrained_weight/Uni3D_PC_encoder/modelzoo/uni3d-small/model.pt \
+#   --pc-encoder-type small \
+#   --get-pc-tokens-way OM_Pooling \
+#   --output /AnyPoint/output/compare_greenplm \
+#   --devices cuda:0 \
+#   --budget 100 \
+#   --batch-size 10 \
+#   --pool-size 1000 \
+#   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
+#   --lambda-explore 0.2

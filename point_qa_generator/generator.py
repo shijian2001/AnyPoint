@@ -52,31 +52,30 @@ class PointQAGenerator:
         }
         self.layouts_classified = self._classify_layouts(self.layouts)
         self.rng = np.random.RandomState(seed)
-        self.scene_builder = None
         
         self.generators = {
             # Distance-based generators
-            "what_distance": WhatDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
-            "where_distance": WhereDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
-            "list_attribute_distance": ListAttributeDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
-            "count_attribute_distance": CountAttributeDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "what_distance": WhatDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
+            "where_distance": WhereDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
+            "list_attribute_distance": ListAttributeDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
+            "count_attribute_distance": CountAttributeDistanceGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
 
             # Attribute-based generators
-            "what_attribute": WhatAttributeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
-            "list_attribute": ListAttributeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
-            "count_attribute": CountAttributeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "what_attribute": WhatAttributeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
+            "list_attribute": ListAttributeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
+            "count_attribute": CountAttributeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
 
             # Number-based generators
-            "count_object": CountObjectGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
-            "frequent_object": FrequentObjectGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
-            "list_attribute_frequent": ListAttributeFrequentGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
-            "count_attribute_frequent": CountAttributeFrequentGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
+            "count_object": CountObjectGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
+            "frequent_object": FrequentObjectGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
+            "list_attribute_frequent": ListAttributeFrequentGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
+            "count_attribute_frequent": CountAttributeFrequentGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
 
             # Size-based generators
-            "what_size": WhatSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
-            "list_attribute_size": ListAttributeSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
-            "count_attribute_size": CountAttributeSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder),
-            "where_size": WhereSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir, scene_builder=self.scene_builder)
+            "what_size": WhatSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
+            "list_attribute_size": ListAttributeSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
+            "count_attribute_size": CountAttributeSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir),
+            "where_size": WhereSizeGenerator(self.metadata, seed, self.layouts_classified, background_dir=self.background_dir)
         }
 
     def get_source_signature(self) -> Dict[str, Any]:

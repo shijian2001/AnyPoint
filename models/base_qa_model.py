@@ -18,7 +18,7 @@ def load_point_cloud(data):
 		return data.cpu().numpy()
 	if isinstance(data, str) and data.endswith('.npy') and os.path.exists(data):
 		return np.load(data)
-	raise ValueError(f"无法识别的点云输入类型: {type(data)}, value: {data}")
+	raise ValueError(f"Unsupported point cloud input type: {type(data)}, value: {data}")
 
 	
 def make_options(choices, format='letter'):

@@ -82,7 +82,7 @@ def run_dynamic_eval(
     
     real_ckpt = model_checkpoint or test_ckpt
     if model_name not in ['minigpt3d', 'pointalign', 'greenplm', 'gpt4point'] and not real_ckpt:
-        raise ValueError("必须提供 --checkpoint 或 --test-ckpt")
+        raise ValueError("--checkpoint or --test-ckpt is required for this model")
 
     runtime_kwargs = dict(model_kwargs)
     if cfg_path is not None:
@@ -183,7 +183,7 @@ def _parse_unknown_args(unknown: List[str]) -> Dict[str, Any]:
     while i < len(unknown):
         token = unknown[i]
         if not token.startswith("--"):
-            raise ValueError(f"无法解析额外参数: {token}")
+            raise ValueError(f"Failed to parse extra CLI argument: {token}")
         if token[2:] in removed_cli_args:
             raise ValueError(f"Removed CLI argument: {token}")
 

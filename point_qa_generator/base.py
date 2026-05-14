@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import hashlib
 import json
 import os
 import numpy as np
 from .metadata import PointCloudMetadata
-from scene_builder.pointcloud_scene_builder import (
+from .scene_builder import (
     fit_background_to_layout,
     get_support_height,
     transform_object_point_cloud,
@@ -46,13 +46,11 @@ class BasePointQAGenerator(ABC):
         seed: int = 42,
         layouts=None,
         background_dir: Optional[str] = None,
-        scene_builder: Optional[Any] = None,
     ):
         self.metadata = metadata
         self.rng = np.random.RandomState(seed)
         self.background_dir = background_dir
         self.background_files = self._scan_backgrounds(background_dir)
-        self.scene_builder = scene_builder
         
         # Support both dict (classified) and list (raw) layouts
         if isinstance(layouts, dict):
@@ -137,9 +135,6 @@ class BasePointQAGenerator(ABC):
         Returns:
             Combined scene point cloud (N, 3+)
         """
-        if self.scene_builder is not None:
-            return self.scene_builder.build_point_cloud(layout, object_mapping)
-
         point_clouds = []
         background = self._load_background(layout, object_mapping)
         support_y = get_support_height(background)

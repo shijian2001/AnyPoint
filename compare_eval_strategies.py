@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import atexit
 import copy
@@ -6,34 +8,28 @@ from dataclasses import dataclass
 import json
 import multiprocessing as mp
 import os
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, TypeVar
 
 import numpy as np
 from tqdm import tqdm
 
-from compare_eval_strategies_utils import (
-    resolve_devices,
-    split_evenly,
-)
-from dynamic_evaluation import (
-    EvalConfig,
-    TaskEmbedder,
-    TaskPool,
-    UtilityCalculator,
-    SEAState,
-    select_acd_style_indices,
-    select_autobencher_style_indices,
-)
+from dynamic_evaluation.baselines import select_acd_style_indices, select_autobencher_style_indices
 from dynamic_evaluation.config import TaskResult
-from dynamic_evaluation.task_pool import PoolItem
-from models.base_qa_model import make_options
-from models.point_qa_model import PointQAModel
 from point_qa_generator.base import Task
-from point_qa_generator.generator import PointQAGenerator
+
+if TYPE_CHECKING:
+    from dynamic_evaluation import EvalConfig, TaskEmbedder, TaskPool, UtilityCalculator
+    from dynamic_evaluation.baselines import SEAState
+    from dynamic_evaluation.task_pool import PoolItem
+    from models.point_qa_model import PointQAModel
+    from point_qa_generator.generator import PointQAGenerator
 
 UTILITY_STRATEGIES = ("dynamic", "affinity_only", "novelty_only")
 BASELINE_STRATEGIES = ("acd_style", "autobencher_style", "sea_style")
 ADAPTIVE_STRATEGIES = (*UTILITY_STRATEGIES, "acd_style", "sea_style")
+
+
+T = TypeVar("T")
 
 
 _WORKER_QA_GEN: Optional[PointQAGenerator] = None
@@ -71,6 +67,48 @@ class EvalRecord:
     error_point_cloud_path: Optional[str]
 
 
+def resolve_devices(devices: str, cuda_visible_devices: Optional[str] = None) -> List[str]:
+    resolved = [item.strip() for item in devices.split(",") if item.strip()]
+    if not resolved:
+        raise ValueError("At least one device must be provided")
+    _validate_cuda_ordinals(resolved, cuda_visible_devices)
+    return resolved
+
+
+def _validate_cuda_ordinals(devices: List[str], cuda_visible_devices: Optional[str]) -> None:
+    if not cuda_visible_devices:
+        return
+
+    visible = [item.strip() for item in cuda_visible_devices.split(",") if item.strip()]
+    if not visible:
+        return
+
+    visible_count = len(visible)
+    for device in devices:
+        if not device.startswith("cuda:"):
+            continue
+        try:
+            ordinal = int(device.split(":", 1)[1])
+        except ValueError as exc:
+            raise ValueError(f"Failed to parse CUDA device: {device}") from exc
+
+        if ordinal >= visible_count:
+            raise ValueError(
+                f"{device} is unavailable because CUDA_VISIBLE_DEVICES={cuda_visible_devices!r} exposes "
+                f"only {visible_count} logical CUDA device(s). Use logical ids cuda:0..cuda:{visible_count - 1}, "
+                "or expose more physical GPUs."
+            )
+
+
+def split_evenly(items: Sequence[T], num_chunks: int) -> List[List[T]]:
+    if num_chunks <= 0:
+        raise ValueError("num_chunks must be positive")
+    chunks: List[List[T]] = [[] for _ in range(num_chunks)]
+    for idx, item in enumerate(items):
+        chunks[idx % num_chunks].append(item)
+    return [chunk for chunk in chunks if chunk]
+
+
 def _to_jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _to_jsonable(val) for key, val in value.items()}
@@ -86,6 +124,8 @@ def _to_jsonable(value: Any) -> Any:
 
 
 def _clone_pool_items(items: List[PoolItem]) -> List[PoolItem]:
+    from dynamic_evaluation.task_pool import PoolItem
+
     return [
         PoolItem(
             item_id=item.item_id,
@@ -211,6 +251,9 @@ def _evaluate_single(
     task_id: int,
     utility: Optional[float],
 ) -> TaskResult:
+    from models.base_qa_model import make_options
+    from dynamic_evaluation import TaskEmbedder
+
     _, _, formatted_options = make_options(task.options, model.format)
     result = model.multiple_choice_qa(
         data={"point_cloud_path": point_cloud_path},
@@ -235,6 +278,7 @@ def _evaluate_single(
 
 def _init_eval_worker(runtime: RuntimeConfig, device: str) -> None:
     global _WORKER_QA_GEN, _WORKER_MODEL
+    from point_qa_generator.generator import PointQAGenerator
 
     _WORKER_QA_GEN = PointQAGenerator(
         metadata_file=runtime.metadata_file,
@@ -337,6 +381,9 @@ def run_strategy(
     point_cloud_dir: str,
     parallel_evaluator: Optional[MultiGpuBatchEvaluator] = None,
 ) -> Dict[str, Any]:
+    from dynamic_evaluation import TaskEmbedder, UtilityCalculator
+    from dynamic_evaluation.baselines import SEAState
+
     os.makedirs(output_dir, exist_ok=True)
 
     remaining = _clone_pool_items(base_items)
@@ -621,6 +668,8 @@ def _build_model(
     prompt_template: Optional[str],
     model_kwargs: Dict[str, Any],
 ) -> PointQAModel:
+    from models.point_qa_model import PointQAModel
+
     runtime_kwargs = dict(model_kwargs)
     if cfg_path is not None:
         runtime_kwargs.setdefault("cfg_path", cfg_path)
@@ -649,7 +698,7 @@ def _parse_unknown_args(unknown: List[str]) -> Dict[str, Any]:
     while i < len(unknown):
         token = unknown[i]
         if not token.startswith("--"):
-            raise ValueError(f"无法解析额外参数: {token}")
+            raise ValueError(f"Failed to parse extra CLI argument: {token}")
 
         key = token[2:].replace("-", "_")
         value: Any = True
@@ -679,6 +728,10 @@ def _coerce_cli_value(value: str) -> Any:
 
 
 def main() -> None:
+    from dynamic_evaluation.config import EvalConfig
+    from dynamic_evaluation.task_pool import TaskPool
+    from point_qa_generator.generator import PointQAGenerator
+
     parser = argparse.ArgumentParser(description="Compare evaluation strategies (random / utility-guided / ACD / AutoBencher / SEA) on a shared task pool")
     parser.add_argument("--metadata", required=True)
     parser.add_argument("--pcd-dir", required=True)
@@ -707,7 +760,7 @@ def main() -> None:
 
     checkpoint_path = args.checkpoint or args.test_ckpt
     if args.model not in ["minigpt3d", "pointalign", "greenplm", "gpt4point"] and not checkpoint_path:
-        raise ValueError("必须提供 --checkpoint 或 --test-ckpt")
+        raise ValueError("--checkpoint or --test-ckpt is required for this model")
 
     devices = resolve_devices(args.devices, cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"))
 
