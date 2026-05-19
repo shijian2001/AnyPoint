@@ -55,11 +55,12 @@ class DynamicEvaluator:
         self,
         qa_generator: PointQAGenerator,
         model: PointQAModel,
-        config: EvalConfig
+        config: EvalConfig,
     ):
         self.gen = qa_generator
         self.model = model
         self.cfg = config
+        self.batch_size = max(1, int(config.batch_size))
         
         # Components
         self.embedder = TaskEmbedder()
@@ -172,15 +173,13 @@ class DynamicEvaluator:
         utilities: Optional[List[float]] = None,
         phase: str = "eval"
     ):
-        """Evaluate a batch."""
+        """Evaluate a batch using the model's batched API in chunks."""
         if utilities is None:
             utilities = [None] * len(batch)
-        
-        for item, u in tqdm(
-            zip(batch, utilities),
-            total=len(batch),
-            desc=phase
-        ):
+
+        # Materialize point clouds and assign task ids first.
+        prepared = []  # list of (task, pc, point_cloud_path, task_id, utility)
+        for item, u in zip(batch, utilities):
             task = item.task
             pc = item.point_cloud
             if pc is None:
@@ -188,19 +187,46 @@ class DynamicEvaluator:
                 item.point_cloud = pc
             point_cloud_path = self._eval_point_cloud_path(self.n_eval)
             self._save_eval_point_cloud(point_cloud_path, pc)
-            result = self._eval_single(task, point_cloud_path, u)
-            
-            self.H_tasks.append(task)
-            self.results.append(result)
-            
-            if not result.is_correct:
-                self.E_tasks.append(task)
-                self.E_point_clouds.append(pc)
-                self.E_indices.append(self.n_eval)
-            else:
-                self.C_tasks.append(task)
-            
+            prepared.append((task, pc, point_cloud_path, self.n_eval, u))
             self.n_eval += 1
+
+        chunk_size = self.batch_size
+        for start in tqdm(range(0, len(prepared), chunk_size), desc=phase):
+            chunk = prepared[start:start + chunk_size]
+            datas = [{'point_cloud_path': p[2]} for p in chunk]
+            questions = [p[0].question for p in chunk]
+            choices_list = [p[0].options for p in chunk]
+            answers = [p[0].answer for p in chunk]
+            qa_results = self.model.multiple_choice_qa_batch(
+                datas=datas,
+                questions=questions,
+                choices_list=choices_list,
+                answers=answers,
+            )
+            for (task, pc, _, task_id, u), qa_res in zip(chunk, qa_results):
+                _, _, formatted_options = make_options(task.options, self.model.format)
+                layout_desc = self.embedder._get_layout(task) if task.metadata else None
+                category = self._infer_category(task)
+                result = TaskResult(
+                    task_id=task_id,
+                    question=task.question,
+                    answer=task.answer,
+                    model_raw_output=qa_res['free_form_answer'],
+                    model_answer=qa_res['multiple_choice_answer'],
+                    is_correct=(qa_res.get('accuracy', 0) == 1),
+                    utility=u,
+                    category=category,
+                    options=formatted_options,
+                    layout_description=layout_desc,
+                )
+                self.H_tasks.append(task)
+                self.results.append(result)
+                if not result.is_correct:
+                    self.E_tasks.append(task)
+                    self.E_point_clouds.append(pc)
+                    self.E_indices.append(task_id)
+                else:
+                    self.C_tasks.append(task)
     
     def _eval_single(
         self,

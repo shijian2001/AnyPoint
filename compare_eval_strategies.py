@@ -9,6 +9,7 @@ import json
 import multiprocessing as mp
 import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, TypeVar
+import torch
 
 import numpy as np
 from tqdm import tqdm
@@ -34,6 +35,7 @@ T = TypeVar("T")
 
 _WORKER_QA_GEN: Optional[PointQAGenerator] = None
 _WORKER_MODEL: Optional[PointQAModel] = None
+_WORKER_INFER_BS: int = 1
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,7 @@ class RuntimeConfig:
     cfg_path: Optional[str]
     prompt_template: Optional[str]
     model_kwargs: Dict[str, Any]
+    batch_size: int = 1
 
 
 @dataclass(frozen=True)
@@ -276,8 +279,63 @@ def _evaluate_single(
     )
 
 
+def _evaluate_batched(
+    model: PointQAModel,
+    tasks: List[Task],
+    point_cloud_paths: List[str],
+    task_ids: List[int],
+    utilities: List[Optional[float]],
+    batch_size: int,
+) -> List[TaskResult]:
+    """Run model in true batched mode, in chunks of ``batch_size``."""
+    from models.base_qa_model import make_options
+    from dynamic_evaluation import TaskEmbedder
+
+    results: List[TaskResult] = []
+    if not tasks:
+        return results
+
+    chunk_size = max(1, int(batch_size))
+    for start in range(0, len(tasks), chunk_size):
+        end = min(start + chunk_size, len(tasks))
+        sub_tasks = tasks[start:end]
+        sub_paths = point_cloud_paths[start:end]
+        sub_ids = task_ids[start:end]
+        sub_us = utilities[start:end]
+
+        datas = [{"point_cloud_path": p} for p in sub_paths]
+        questions = [t.question for t in sub_tasks]
+        choices_list = [t.options for t in sub_tasks]
+        answers = [t.answer for t in sub_tasks]
+
+        batch_results = model.multiple_choice_qa_batch(
+            datas=datas,
+            questions=questions,
+            choices_list=choices_list,
+            answers=answers,
+        )
+        for task, task_id, utility, res in zip(sub_tasks, sub_ids, sub_us, batch_results):
+            _, _, formatted_options = make_options(task.options, model.format)
+            layout_desc = TaskEmbedder._get_layout(task) if task.metadata else None
+            results.append(
+                TaskResult(
+                    task_id=task_id,
+                    question=task.question,
+                    answer=task.answer,
+                    model_raw_output=res["free_form_answer"],
+                    model_answer=res["multiple_choice_answer"],
+                    is_correct=(res.get("accuracy", 0) == 1),
+                    utility=utility,
+                    category=_infer_category(task),
+                    options=formatted_options,
+                    layout_description=layout_desc,
+                )
+            )
+    return results
+
+
 def _init_eval_worker(runtime: RuntimeConfig, device: str) -> None:
-    global _WORKER_QA_GEN, _WORKER_MODEL
+    global _WORKER_QA_GEN, _WORKER_MODEL, _WORKER_INFER_BS
     from point_qa_generator.generator import PointQAGenerator
 
     _WORKER_QA_GEN = PointQAGenerator(
@@ -296,13 +354,17 @@ def _init_eval_worker(runtime: RuntimeConfig, device: str) -> None:
         prompt_template=runtime.prompt_template,
         model_kwargs=runtime.model_kwargs,
     )
+    _WORKER_INFER_BS = max(1, int(runtime.batch_size))
 
 
 def _evaluate_worker_jobs(jobs: Sequence[EvalJob]) -> List[EvalRecord]:
     if _WORKER_QA_GEN is None or _WORKER_MODEL is None:
         raise RuntimeError("Evaluation worker is not initialized")
 
-    records: List[EvalRecord] = []
+    if not jobs:
+        return []
+
+    # Materialize and persist point clouds so the model only reads from disk.
     for job in jobs:
         task = job.item.task
         point_cloud = job.item.point_cloud
@@ -311,11 +373,21 @@ def _evaluate_worker_jobs(jobs: Sequence[EvalJob]) -> List[EvalRecord]:
         if point_cloud is not None:
             _save_eval_point_cloud(job.point_cloud_path, point_cloud)
 
-        result = _evaluate_single(_WORKER_MODEL, None, task, job.point_cloud_path, job.task_id, job.utility)
+    tasks = [job.item.task for job in jobs]
+    paths = [job.point_cloud_path for job in jobs]
+    task_ids = [job.task_id for job in jobs]
+    utilities = [job.utility for job in jobs]
+
+    results = _evaluate_batched(
+        _WORKER_MODEL, tasks, paths, task_ids, utilities, _WORKER_INFER_BS
+    )
+
+    records: List[EvalRecord] = []
+    for job, result in zip(jobs, results):
         records.append(
             EvalRecord(
                 task_id=job.task_id,
-                task=task,
+                task=job.item.task,
                 result=result,
                 error_point_cloud_path=None if result.is_correct else job.point_cloud_path,
             )
@@ -448,6 +520,7 @@ def run_strategy(
                 point_cloud_dir,
                 phase=f"{strategy}_batch_{batch_idx}",
                 parallel_evaluator=parallel_evaluator,
+                batch_size=cfg.batch_size,
             )
             # Static baselines preselect the whole budget at once; drop reconstructed
             # point clouds after each batch so earlier batches do not accumulate in RAM.
@@ -470,6 +543,7 @@ def run_strategy(
             point_cloud_dir,
             phase=f"{strategy}_cold_start",
             parallel_evaluator=parallel_evaluator,
+            batch_size=cfg.batch_size,
         )
         if strategy in UTILITY_STRATEGIES:
             c_embs, e_embs = _update_embeddings(embedder, c_tasks, e_tasks)
@@ -539,6 +613,7 @@ def run_strategy(
                 utilities=utilities,
                 phase=strategy,
                 parallel_evaluator=parallel_evaluator,
+                batch_size=cfg.batch_size,
             )
             if strategy in UTILITY_STRATEGIES:
                 c_embs, e_embs = _update_embeddings(embedder, c_tasks, e_tasks)
@@ -577,6 +652,7 @@ def _evaluate_batch(
     utilities: Optional[List[Optional[float]]] = None,
     phase: str = "eval",
     parallel_evaluator: Optional[MultiGpuBatchEvaluator] = None,
+    batch_size: int = 1,
 ) -> int:
     if utilities is None:
         utilities = [None] * len(batch)
@@ -596,10 +672,14 @@ def _evaluate_batch(
             _append_eval_record(record, results, c_tasks, e_tasks, e_point_cloud_paths, error_indices)
         return n_eval + len(records)
 
-    for item, utility in tqdm(zip(batch, utilities), total=len(batch), desc=phase):
-        if model is None:
-            raise ValueError("Single-process evaluation requires an initialized model")
+    if model is None:
+        raise ValueError("Single-process evaluation requires an initialized model")
 
+    tasks: List[Task] = []
+    paths: List[str] = []
+    task_ids: List[int] = []
+    util_list: List[Optional[float]] = []
+    for offset, (item, utility) in enumerate(zip(batch, utilities)):
         task = item.task
         point_cloud = item.point_cloud
         point_cloud_path = _eval_point_cloud_path(point_cloud_dir, item.item_id)
@@ -608,14 +688,33 @@ def _evaluate_batch(
             item.point_cloud = point_cloud
         if point_cloud is not None:
             _save_eval_point_cloud(point_cloud_path, point_cloud)
+        tasks.append(task)
+        paths.append(point_cloud_path)
+        task_ids.append(n_eval + offset)
+        util_list.append(utility)
 
-        task_result = _evaluate_single(model, embedder, task, point_cloud_path, n_eval, utility)
+    chunk_size = max(1, int(batch_size))
+    task_results: List[TaskResult] = []
+    for start in tqdm(range(0, len(tasks), chunk_size), desc=phase):
+        end = min(start + chunk_size, len(tasks))
+        task_results.extend(
+            _evaluate_batched(
+                model,
+                tasks[start:end],
+                paths[start:end],
+                task_ids[start:end],
+                util_list[start:end],
+                chunk_size,
+            )
+        )
+
+    for offset, task_result in enumerate(task_results):
         _append_eval_record(
             EvalRecord(
-                task_id=n_eval,
-                task=task,
+                task_id=task_ids[offset],
+                task=tasks[offset],
                 result=task_result,
-                error_point_cloud_path=None if task_result.is_correct else point_cloud_path,
+                error_point_cloud_path=None if task_result.is_correct else paths[offset],
             ),
             results,
             c_tasks,
@@ -624,9 +723,7 @@ def _evaluate_batch(
             error_indices,
         )
 
-        n_eval += 1
-
-    return n_eval
+    return n_eval + len(tasks)
 
 
 def _append_eval_record(
@@ -762,7 +859,18 @@ def main() -> None:
     if args.model not in ["minigpt3d", "pointalign", "greenplm", "gpt4point"] and not checkpoint_path:
         raise ValueError("--checkpoint or --test-ckpt is required for this model")
 
-    devices = resolve_devices(args.devices, cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"))
+    # OneLLM tensor-parallel mode: rank > 0 ranks must NOT validate CUDA ordinals
+    # against CUDA_VISIBLE_DEVICES (torchrun pins each rank to its own visible GPU).
+    is_torchrun = "RANK" in os.environ and "WORLD_SIZE" in os.environ
+    if is_torchrun:
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ.get("LOCAL_RANK", rank))
+        devices = [f"cuda:{local_rank}"]
+    else:
+        devices = resolve_devices(args.devices, cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"))
+        rank = 0
+        world_size = 1
 
     qa_gen = PointQAGenerator(
         metadata_file=args.metadata,
@@ -774,7 +882,40 @@ def main() -> None:
 
     model: Optional[PointQAModel] = None
     parallel_evaluator: Optional[MultiGpuBatchEvaluator] = None
-    if len(devices) == 1:
+
+    if is_torchrun and args.model == "onellm":
+        # ---- OneLLM fairscale tensor-parallel multi-GPU path ----
+        import torch.distributed as dist
+        from fairscale.nn.model_parallel import initialize as fs_init
+
+        if not dist.is_initialized():
+            dist.init_process_group(backend="nccl")
+        if not fs_init.model_parallel_is_initialized():
+            fs_init.initialize_model_parallel(world_size)
+        torch.cuda.set_device(local_rank)
+
+        onellm_kwargs = dict(extra_kwargs)
+        onellm_kwargs["_external_dist_init"] = True
+        model = _build_model(
+            model_name=args.model,
+            checkpoint_path=checkpoint_path,
+            output_dir=args.output,
+            device=devices[0],
+            cfg_path=args.cfg_path,
+            prompt_template=args.prompt_template,
+            model_kwargs=onellm_kwargs,
+        )
+
+        if rank != 0:
+            # Non-zero TP ranks just service generate broadcasts and exit when told.
+            inner = model.model  # OneLLM instance
+            try:
+                inner.tp_worker_loop()
+            finally:
+                if dist.is_initialized():
+                    dist.destroy_process_group()
+            return
+    elif len(devices) == 1:
         model = _build_model(
             model_name=args.model,
             checkpoint_path=checkpoint_path,
@@ -785,7 +926,12 @@ def main() -> None:
             model_kwargs=extra_kwargs,
         )
     else:
-        print(f"[INFO] Multi-GPU evaluation enabled: {', '.join(devices)}")
+        if args.model == "onellm":
+            raise ValueError(
+                "OneLLM multi-GPU requires fairscale tensor-parallel via torchrun. "
+                "Launch with: torchrun --nproc_per_node=N compare_eval_strategies.py --devices cuda:0 ..."
+            )
+        print(f"[INFO] Multi-GPU evaluation enabled (per-GPU subprocess): {', '.join(devices)}")
         parallel_evaluator = MultiGpuBatchEvaluator(
             RuntimeConfig(
                 metadata_file=args.metadata,
@@ -799,6 +945,7 @@ def main() -> None:
                 cfg_path=args.cfg_path,
                 prompt_template=args.prompt_template,
                 model_kwargs=extra_kwargs,
+                batch_size=args.batch_size,
             ),
             devices,
         )
@@ -845,6 +992,15 @@ def main() -> None:
     finally:
         if parallel_evaluator is not None:
             parallel_evaluator.close()
+        # OneLLM TP rank-0 cleanup: tell other ranks to exit.
+        if is_torchrun and args.model == "onellm" and rank == 0 and model is not None:
+            try:
+                model.model.tp_signal_exit()
+            except Exception:
+                pass
+            import torch.distributed as dist
+            if dist.is_initialized():
+                dist.destroy_process_group()
 
     compare_summary = {
         "random": random_summary["stats"],

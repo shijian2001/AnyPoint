@@ -254,11 +254,63 @@ class PointLLM(QAModelInstance):
             )
 
         response = self.tokenizer.decode(
-            output_ids[0][input_ids.shape[1]:], 
+            output_ids[0][input_ids.shape[1]:],
             skip_special_tokens=True
         ).strip()
 
         return response
+
+    def qa_batch(self, datas: List[Dict[str, Any]], prompts: List[str]) -> List[str]:
+        """Batched PointLLM inference. Follows official PointLLM/eval/eval_objaverse.py:
+        per-sample tokenize -> left-pad -> single model.generate over (B, L) + (B, N, C)."""
+        if not datas:
+            return []
+
+        prompt_texts = []
+        for prompt in prompts:
+            conv = self.conv_templates[self.conv_mode].copy()
+            conv.append_message(conv.roles[0], prompt)
+            conv.append_message(conv.roles[1], None)
+            prompt_texts.append(conv.get_prompt())
+
+        encoded = [self.tokenizer(t, return_tensors='pt').input_ids[0] for t in prompt_texts]
+        max_len = max(t.shape[0] for t in encoded)
+        pad_id = self.tokenizer.pad_token_id
+        if pad_id is None:
+            pad_id = self.tokenizer.eos_token_id
+        input_ids = torch.full((len(encoded), max_len), pad_id, dtype=encoded[0].dtype)
+        attention_mask = torch.zeros((len(encoded), max_len), dtype=torch.long)
+        for i, t in enumerate(encoded):
+            # left-pad so generation continuation aligns at the right
+            input_ids[i, max_len - t.shape[0]:] = t
+            attention_mask[i, max_len - t.shape[0]:] = 1
+        input_ids = input_ids.to(self.device)
+        attention_mask = attention_mask.to(self.device)
+
+        pcs = []
+        for data in datas:
+            pc = data.get('point_cloud') or data.get('point_cloud_path')
+            pcs.append(self._prepare_point_cloud(pc))
+        point_clouds = torch.stack(pcs, dim=0)
+
+        with torch.inference_mode():
+            output_ids = self.model.generate(
+                input_ids,
+                attention_mask=attention_mask,
+                point_clouds=point_clouds,
+                do_sample=self.temperature > 0 and self.num_beams == 1,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                num_beams=self.num_beams,
+                max_new_tokens=self.max_new_tokens,
+                use_cache=True,
+            )
+
+        input_token_len = input_ids.shape[1]
+        outputs = self.tokenizer.batch_decode(
+            output_ids[:, input_token_len:], skip_special_tokens=True
+        )
+        return [o.strip() for o in outputs]
 
 
 class MiniGPT3D(QAModelInstance):
@@ -335,8 +387,45 @@ class MiniGPT3D(QAModelInstance):
         answer = answers[0].lower().replace('<unk>', '').strip()
         answer = answer.split('###')[0]
         answer = answer.split('Assistant:')[-1].strip()
-        
+
         return answer
+
+    def qa_batch(self, datas: List[Dict[str, Any]], prompts: List[str]) -> List[str]:
+        """Batched MiniGPT-3D inference, mirroring official MiniGPT-3D/pointllm/eval/eval_objaverse.py."""
+        if not datas:
+            return []
+        pcs = []
+        for data in datas:
+            pc = data.get('point_cloud') or data.get('point_cloud_path')
+            t = self._prepare_point_cloud(pc)
+            if t.dim() == 3 and t.shape[0] == 1:
+                t = t.squeeze(0)
+            pcs.append(t)
+        point_clouds = torch.stack(pcs, dim=0)
+
+        texts = self.prepare_texts(list(prompts), self.conv_temp)
+
+        with torch.inference_mode():
+            answers = self.model.generate(
+                point_clouds,
+                texts,
+                num_beams=self.num_beams,
+                max_new_tokens=self.max_new_tokens,
+                min_length=self.min_length,
+                top_p=self.top_p,
+                repetition_penalty=self.repetition_penalty,
+                length_penalty=self.length_penalty,
+                temperature=self.temperature,
+                do_sample=self.do_sample,
+            )
+
+        outs = []
+        for ans in answers:
+            ans = ans.lower().replace('<unk>', '').strip()
+            ans = ans.split('###')[0]
+            ans = ans.split('Assistant:')[-1].strip()
+            outs.append(ans)
+        return outs
 
 
 class PointAlign(QAModelInstance):
@@ -456,6 +545,43 @@ class PointAlign(QAModelInstance):
         answer = answer.split('Assistant:')[-1].strip()
 
         return answer
+
+    def qa_batch(self, datas: List[Dict[str, Any]], prompts: List[str]) -> List[str]:
+        """Batched PointAlign inference (shares the MiniGPT-4 LAVIS-style generate signature)."""
+        if not datas:
+            return []
+        pcs = []
+        for data in datas:
+            pc = data.get('point_cloud') or data.get('point_cloud_path')
+            t = self._prepare_point_cloud(pc)
+            if t.dim() == 3 and t.shape[0] == 1:
+                t = t.squeeze(0)
+            pcs.append(t)
+        point_clouds = torch.stack(pcs, dim=0)
+
+        texts = self.prepare_texts(list(prompts), self.conv_temp)
+
+        with torch.inference_mode():
+            answers = self.model.generate(
+                point_clouds,
+                texts,
+                num_beams=self.num_beams,
+                max_new_tokens=self.max_new_tokens,
+                min_length=self.min_length,
+                top_p=self.top_p,
+                repetition_penalty=self.repetition_penalty,
+                length_penalty=self.length_penalty,
+                temperature=self.temperature,
+                do_sample=self.do_sample,
+            )
+
+        outs = []
+        for ans in answers:
+            ans = ans.lower().replace('<unk>', '').strip()
+            ans = ans.split('###')[0]
+            ans = ans.split('Assistant:')[-1].strip()
+            outs.append(ans)
+        return outs
 
 
 class GreenPLM(QAModelInstance):
@@ -638,21 +764,26 @@ class OneLLM(QAModelInstance):
         self.pc_norm = pc_norm
 
         master_port = int(kwargs.get('master_port', 23591))
-        if not dist.is_initialized():
-            dist.init_process_group(
-                backend='nccl',
-                rank=0,
-                world_size=1,
-                init_method=f'tcp://127.0.0.1:{master_port}',
-            )
-        if not fs_init.model_parallel_is_initialized():
-            fs_init.initialize_model_parallel(1)
+        external_dist_init = bool(kwargs.get('_external_dist_init', False))
+        if not external_dist_init:
+            if not dist.is_initialized():
+                dist.init_process_group(
+                    backend='nccl',
+                    rank=0,
+                    world_size=1,
+                    init_method=f'tcp://127.0.0.1:{master_port}',
+                )
+            if not fs_init.model_parallel_is_initialized():
+                fs_init.initialize_model_parallel(1)
+        # else: parent (mp.spawn / torchrun) already initialized dist + fairscale TP
+        self.tp_world_size = dist.get_world_size() if dist.is_initialized() else 1
+        self.tp_rank = dist.get_rank() if dist.is_initialized() else 0
 
         gpu_id = 0
         if ':' in str(self.device):
             gpu_id = int(str(self.device).split(':')[-1])
         torch.cuda.set_device(gpu_id)
-        setup_for_distributed(True)
+        setup_for_distributed(self.tp_rank == 0)
 
         self.target_dtype = {'bf16': torch.bfloat16, 'fp16': torch.float16}[self.dtype_name]
         dep_root = os.path.join(os.path.dirname(__file__), 'dependence', 'onellm')
@@ -706,6 +837,102 @@ class OneLLM(QAModelInstance):
                 modal=['point'],
             )[0]
         return response[len(prompt_text):].split('###')[0].strip()
+
+    def qa_batch(self, datas: List[Dict[str, Any]], prompts: List[str]) -> List[str]:
+        """Batched OneLLM inference. MetaModel.generate already accepts List[str] +
+        batched ``images`` and performs left-padded autoregressive decode internally
+        (see csuhan/OneLLM model/meta.py L60-110).
+
+        Under fairscale tensor-parallel (launched via torchrun --nproc_per_node=N),
+        rank 0 broadcasts the inputs to all ranks; every rank calls ``generate``
+        collectively. Only rank 0 returns the decoded strings.
+        """
+        if not datas:
+            return []
+        pcs = []
+        for data in datas:
+            pc = data.get('point_cloud') or data.get('point_cloud_path')
+            if pc is None and not self.no_point_input:
+                raise ValueError('Point cloud is required for OneLLM evaluation')
+            t = self._prepare_point_cloud(pc)
+            if t.dim() == 3 and t.shape[0] == 1:
+                t = t.squeeze(0)
+            pcs.append(t)
+        model_points = torch.stack(pcs, dim=0).to(self.device, dtype=self.target_dtype)
+
+        prompt_texts = []
+        for prompt in prompts:
+            conv = self.conv_templates['v1'].copy()
+            conv.append_message(conv.roles[0], prompt)
+            conv.append_message(conv.roles[1], None)
+            prompt_texts.append(conv.get_prompt())
+
+        if self.tp_world_size > 1:
+            import torch.distributed as dist
+            payload = [{
+                "cmd": "generate",
+                "prompts": prompt_texts,
+                "shape": tuple(model_points.shape),
+                "dtype": str(model_points.dtype),
+            }]
+            dist.broadcast_object_list(payload, src=0)
+            dist.broadcast(model_points, src=0)
+
+        with torch.cuda.amp.autocast(dtype=self.target_dtype):
+            responses = self.model.generate(
+                prompt_texts,
+                model_points,
+                self.max_new_tokens,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                modal=['point'],
+            )
+        outs = []
+        for resp, pt in zip(responses, prompt_texts):
+            outs.append(resp[len(pt):].split('###')[0].strip())
+        return outs
+
+    def tp_worker_loop(self) -> None:
+        """Worker loop for non-zero ranks under fairscale tensor-parallel.
+
+        Receives (prompts, points) broadcasts from rank 0, participates in the
+        collective ``MetaModel.generate`` call, and exits when rank 0 sends
+        ``cmd='exit'``. Only used in OneLLM TP mode.
+        """
+        import torch.distributed as dist
+        assert self.tp_world_size > 1, "tp_worker_loop requires TP world_size > 1"
+        while True:
+            payload = [None]
+            dist.broadcast_object_list(payload, src=0)
+            msg = payload[0]
+            if msg is None or msg.get("cmd") == "exit":
+                return
+            if msg["cmd"] != "generate":
+                raise ValueError(f"Unknown TP command: {msg['cmd']}")
+            shape = msg["shape"]
+            dtype = {
+                "torch.float16": torch.float16,
+                "torch.bfloat16": torch.bfloat16,
+                "torch.float32": torch.float32,
+            }[msg["dtype"]]
+            buf = torch.empty(shape, dtype=dtype, device='cuda')
+            dist.broadcast(buf, src=0)
+            with torch.cuda.amp.autocast(dtype=self.target_dtype):
+                self.model.generate(
+                    msg["prompts"],
+                    buf,
+                    self.max_new_tokens,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    modal=['point'],
+                )
+
+    def tp_signal_exit(self) -> None:
+        """Tell non-zero ranks to leave their TP worker loop. Called on rank 0."""
+        if self.tp_world_size <= 1:
+            return
+        import torch.distributed as dist
+        dist.broadcast_object_list([{"cmd": "exit"}], src=0)
 
 
 class ThreeDR1(QAModelInstance):

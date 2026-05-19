@@ -25,6 +25,10 @@ export SENTENCE_TRANSFORMERS_HOME=/model/sentence_transformers
 #   --lambda-explore 0.2
 
 # PointLLM
+# --batch-size now drives both the strategy re-rank cadence AND the per-forward
+# inference batch (model.generate batch dim). Official PointLLM eval default is 6.
+# For multi-GPU, set CUDA_VISIBLE_DEVICES=0,1,... and --devices cuda:0,cuda:1,...
+# (per-GPU subprocess sharding, like ShapeLLM official model_vqa --num-chunks).
 python3 /AnyPoint/compare_eval_strategies.py \
   --metadata /data/texverse/metadata.jsonl \
   --pcd-dir /data/texverse/points_npy \
@@ -35,12 +39,13 @@ python3 /AnyPoint/compare_eval_strategies.py \
   --output /AnyPoint/output/compare_pointllm \
   --devices cuda:0 \
   --budget 100 \
-  --batch-size 10 \
+  --batch-size 6 \
   --pool-size 1000 \
   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
   --lambda-explore 0.2
 
 # OneLLM
+# Single-GPU (batched inference inside generate via MetaModel.generate left-pad loop):
 # python3 /AnyPoint/compare_eval_strategies.py \
 #   --metadata /data/texverse/metadata.jsonl \
 #   --pcd-dir /data/texverse/points_npy \
@@ -54,12 +59,32 @@ python3 /AnyPoint/compare_eval_strategies.py \
 #   --output /AnyPoint/output/compare_onellm \
 #   --devices cuda:0 \
 #   --budget 100 \
-#   --batch-size 10 \
+#   --batch-size 4 \
+#   --pool-size 1000 \
+#   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
+#   --lambda-explore 0.2
+
+# Multi-GPU (fairscale tensor-parallel, like csuhan/OneLLM/demos/cli.py):
+# torchrun --nproc_per_node=2 --master_port=23862 /AnyPoint/compare_eval_strategies.py \
+#   --metadata /data/texverse/metadata.jsonl \
+#   --pcd-dir /data/texverse/points_npy \
+#   --background-dir /data/texverse/background \
+#   --layouts /AnyPoint/outputs_gpt_oss/layouts.json \
+#   --model onellm \
+#   --checkpoint /model/OneLLM-7B/consolidated.00-of-01.pth \
+#   --clip-pretrained-path /model/vit_large_patch14_clip_224/open_clip_pytorch_model.bin \
+#   --point-format xyzrgb \
+#   --offline true \
+#   --output /AnyPoint/output/compare_onellm \
+#   --devices cuda:0 \
+#   --budget 100 \
+#   --batch-size 4 \
 #   --pool-size 1000 \
 #   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
 #   --lambda-explore 0.2
 
 # MiniGPT-3D
+# --batch-size mirrors the official MiniGPT-3D eval (batch=15).
 # python3 /AnyPoint/compare_eval_strategies.py \
 #   --metadata /data/texverse/metadata.jsonl \
 #   --pcd-dir /data/texverse/points_npy \
@@ -70,7 +95,7 @@ python3 /AnyPoint/compare_eval_strategies.py \
 #   --output /AnyPoint/output/compare_minigpt3d \
 #   --devices cuda:0 \
 #   --budget 100 \
-#   --batch-size 10 \
+#   --batch-size 15 \
 #   --pool-size 1000 \
 #   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
 #   --lambda-explore 0.2

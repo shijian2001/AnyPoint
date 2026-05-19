@@ -43,6 +43,10 @@ class QAModelInstance:
 	def qa(self, data, prompt):
 		"(Abstract method) abstract QA method"
 
+	def qa_batch(self, datas, prompts):
+		"""Default batched QA: serial fallback. Override in wrappers that support real batching."""
+		return [self.qa(d, p) for d, p in zip(datas, prompts)]
+
 
 class QAModel(Model):
 	def __init__(
@@ -139,6 +143,74 @@ class QAModel(Model):
 		if answer is not None:
 			result["accuracy"] = int(answer == multiple_choice_answer)
 		return result
+
+	@torch.no_grad()
+	def _qa_batch(self, datas, prompts):
+		if self.cache_path is None:
+			return self.model.qa_batch(datas, prompts)
+		responses = [None] * len(datas)
+		miss_idx, miss_data, miss_prompt = [], [], []
+		with diskcache.Cache(self.cache_path, size_limit=10 * (2 ** 30)) as cache:
+			keys = [json.dumps([self.model_name, self._data_to_str(d), p]) for d, p in zip(datas, prompts)]
+			for i, key in enumerate(keys):
+				cached = cache.get(key, None)
+				if cached is None:
+					miss_idx.append(i)
+					miss_data.append(datas[i])
+					miss_prompt.append(prompts[i])
+				else:
+					responses[i] = cached
+			if miss_idx:
+				new_resps = self.model.qa_batch(miss_data, miss_prompt)
+				for j, i in enumerate(miss_idx):
+					responses[i] = new_resps[j]
+					cache.set(keys[i], new_resps[j])
+		return responses
+
+	@torch.no_grad()
+	def multiple_choice_qa_batch(self, datas, questions, choices_list, answers=None):
+		"""Batched multiple-choice QA. Returns a list of result dicts.
+
+		Mirrors :meth:`multiple_choice_qa` exactly but groups model calls so wrappers
+		can perform a single batched forward pass.
+		"""
+		prompts = [self.prompt_func(q, c) for q, c in zip(questions, choices_list)]
+		free_form_answers = self._qa_batch(datas, prompts)
+
+		results = []
+		if answers is None:
+			answers = [None] * len(datas)
+
+		for free_form_answer, choices, answer in zip(free_form_answers, choices_list, answers):
+			free_form_answer = (free_form_answer or "").strip()
+			prefix1, prefix2, options = make_options(choices, self.format)
+
+			if free_form_answer in choices:
+				multiple_choice_answer = free_form_answer
+			elif free_form_answer in options:
+				multiple_choice_answer = choices[options.index(free_form_answer)]
+			elif free_form_answer in prefix1:
+				multiple_choice_answer = choices[prefix1.index(free_form_answer)]
+			elif free_form_answer in prefix2:
+				multiple_choice_answer = choices[prefix2.index(free_form_answer)]
+			elif self.enable_choice_search:
+				multiple_choice_answer = self.choice_search(free_form_answer, choices)
+			else:
+				multiple_choice_answer = ""
+				for to_check in [choices, options, prefix1, prefix2]:
+					idx = check_contain(free_form_answer, to_check)
+					if idx != -1:
+						multiple_choice_answer = choices[idx]
+						break
+
+			result = {
+				"free_form_answer"      : free_form_answer,
+				"multiple_choice_answer": multiple_choice_answer,
+			}
+			if answer is not None:
+				result["accuracy"] = int(answer == multiple_choice_answer)
+			results.append(result)
+		return results
 
 	@torch.no_grad()
 	def multiple_choice_qa_random_ordering(self, data, question, choices, answer=None, n_trials=3):
