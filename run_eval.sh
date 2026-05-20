@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=2,3
 export HF_ENDPOINT=https://hf-mirror.com
-export SENTENCE_TRANSFORMERS_HOME=/model/sentence_transformers
+export SENTENCE_TRANSFORMERS_HOME=/home/wangxingjian/model
 
 
 # ShapeLLM
@@ -29,19 +29,19 @@ export SENTENCE_TRANSFORMERS_HOME=/model/sentence_transformers
 # inference batch (model.generate batch dim). Official PointLLM eval default is 6.
 # For multi-GPU, set CUDA_VISIBLE_DEVICES=0,1,... and --devices cuda:0,cuda:1,...
 # (per-GPU subprocess sharding, like ShapeLLM official model_vqa --num-chunks).
-python3 /AnyPoint/compare_eval_strategies.py \
-  --metadata /data/texverse/metadata.jsonl \
-  --pcd-dir /data/texverse/points_npy \
-  --background-dir /data/texverse/background \
-  --layouts /AnyPoint/outputs_gpt_oss/layouts.json \
+python3 compare_eval_strategies.py \
+  --metadata /home/wangxingjian/data/texverse/metadata.jsonl \
+  --pcd-dir /home/wangxingjian/data/texverse/points_npy \
+  --background-dir /home/wangxingjian/data/texverse/background \
+  --layouts /home/wangxingjian/AnyPoint/outputs_gpt_oss/layouts.json \
   --model pointllm \
-  --checkpoint /model/PointLLM_7B_v1.2 \
-  --output /AnyPoint/output/compare_pointllm \
-  --devices cuda:0 \
+  --checkpoint /home/wangxingjian/model/PointLLM_7B_v1.2 \
+  --output /home/wangxingjian/AnyPoint/output/pointllm \
+  --devices cuda:0,cuda:1 \
   --budget 100 \
   --batch-size 6 \
   --pool-size 1000 \
-  --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
+  --pool-cache-dir /home/wangxingjian/AnyPoint/output/task_pool_cache \
   --lambda-explore 0.2
 
 # OneLLM

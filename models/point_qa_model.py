@@ -204,15 +204,18 @@ class PointLLM(QAModelInstance):
         self.top_p = kwargs.get('top_p', None)
         self.num_beams = kwargs.get('num_beams', 1)
         self.max_new_tokens = kwargs.get('max_new_tokens', 512)
+        self.num_points = int(kwargs.get('num_points', 8192))
 
         from models.dependence.pointllm.model import PointLLMLlamaForCausalLM  
         from models.dependence.pointllm.conversation import conv_templates 
         from models.dependence.pointllm.utils import disable_torch_init  
         from models.dependence.pointllm.data import pc_norm 
+        from models.dependence.pointllm.data.utils import farthest_point_sample
         from transformers import AutoTokenizer
 
         self.conv_templates = conv_templates
         self.pc_norm = pc_norm
+        self.farthest_point_sample = farthest_point_sample
         
         disable_torch_init()
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
@@ -220,11 +223,18 @@ class PointLLM(QAModelInstance):
         self.model.eval()
         self.model.initialize_tokenizer_point_backbone_config(self.tokenizer, device=self.device, fix_llm=True)
 
+
     def _prepare_point_cloud(self, point_cloud: Union[np.ndarray, torch.Tensor, str]) -> torch.Tensor:
         pc = load_point_cloud(point_cloud)
         if isinstance(pc, torch.Tensor):
             pc = pc.cpu().numpy()
         
+        if pc.shape[0] == self.num_points:
+            return pc
+        if pc.shape[0] > self.num_points:
+            return self.farthest_point_sample(pc, self.num_points)
+        pc = np.concatenate([pc, pc[np.random.choice(pc.shape[0], self.num_points - pc.shape[0], replace=True)]], axis=0)
+
         pc = self.pc_norm(pc)
         return torch.from_numpy(pc).float().to(self.device)
 
