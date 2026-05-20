@@ -9,7 +9,7 @@ import numpy as np
 from typing import Dict, List, Any, Callable, Union, Sequence, Mapping
 from collections import OrderedDict
 
-from .base_qa_model import QAModel, QAModelInstance, load_point_cloud
+from .base_qa_model import QAModel, QAModelInstance, load_point_cloud, resample_point_cloud
 
 point_qa_models = {
     "shapellm": ("ShapeLLM"),
@@ -143,9 +143,15 @@ class ShapeLLM(QAModelInstance):
         if point_path:
             point_cloud = point_path
         point = load_point_cloud(point_cloud)
-        
+
+        # ShapeLLM's process_pts -> random_sample only DOWNsamples (only when N > sample_points_num).
+        # If our generated N is smaller, pad up to sample_points_num so the model gets the expected size.
+        sample_n = int(getattr(self.model.config, 'sample_points_num', 10000))
+        if point.shape[0] < sample_n:
+            point = resample_point_cloud(point, sample_n)
+
         pts_tensor = self.process_pts(point, self.model.config).unsqueeze(0)
-        
+
         return pts_tensor.to(self.device, dtype=torch.float16)
 
     def qa(self, data: Dict[str, Any], prompt: str) -> str:
@@ -228,13 +234,7 @@ class PointLLM(QAModelInstance):
         pc = load_point_cloud(point_cloud)
         if isinstance(pc, torch.Tensor):
             pc = pc.cpu().numpy()
-        
-        if pc.shape[0] == self.num_points:
-            return pc
-        if pc.shape[0] > self.num_points:
-            return self.farthest_point_sample(pc, self.num_points)
-        pc = np.concatenate([pc, pc[np.random.choice(pc.shape[0], self.num_points - pc.shape[0], replace=True)]], axis=0)
-
+        pc = resample_point_cloud(pc, self.num_points, fps_fn=self.farthest_point_sample)
         pc = self.pc_norm(pc)
         return torch.from_numpy(pc).float().to(self.device)
 
@@ -342,6 +342,7 @@ class MiniGPT3D(QAModelInstance):
         self.length_penalty = kwargs.get('length_penalty', 1.0)
         self.temperature = kwargs.get('temperature', 0.2)
         self.do_sample = kwargs.get('do_sample', False)
+        self.num_points = int(kwargs.get('num_points', 8192))
 
         from minigpt4.common.eval_utils import init_model, prepare_texts
         from minigpt4.conversation.conversation import CONV_VISION
@@ -369,7 +370,7 @@ class MiniGPT3D(QAModelInstance):
         pc = load_point_cloud(point_cloud)
         if isinstance(pc, torch.Tensor):
             pc = pc.cpu().numpy()
-        
+        pc = resample_point_cloud(pc, self.num_points)
         return torch.from_numpy(pc).float().unsqueeze(0).to(self.device)
 
     def qa(self, data: Dict[str, Any], prompt: str) -> str:
@@ -474,6 +475,7 @@ class PointAlign(QAModelInstance):
         self.length_penalty = kwargs.get('length_penalty', 1.0)
         self.temperature = kwargs.get('temperature', 0.2)
         self.do_sample = kwargs.get('do_sample', False)
+        self.num_points = int(kwargs.get('num_points', 8192))
 
         for name, path in [
             ('cfg_path', self.cfg_path),
@@ -525,7 +527,7 @@ class PointAlign(QAModelInstance):
         pc = load_point_cloud(point_cloud)
         if isinstance(pc, torch.Tensor):
             pc = pc.cpu().numpy()
-
+        pc = resample_point_cloud(pc, self.num_points)
         return torch.from_numpy(pc).float().unsqueeze(0).to(self.device)
 
     def qa(self, data: Dict[str, Any], prompt: str) -> str:
@@ -616,6 +618,7 @@ class GreenPLM(QAModelInstance):
         self.max_new_tokens = kwargs.get('max_new_tokens', 50)
         self.min_new_tokens = kwargs.get('min_new_tokens', 0)
         self.repetition_penalty = kwargs.get('repetition_penalty', 1.0)
+        self.num_points = int(kwargs.get('num_points', 8192))
 
         from models.dependence.greenplm.llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
         from models.dependence.greenplm.llava.conversation import conv_templates
@@ -690,11 +693,12 @@ class GreenPLM(QAModelInstance):
         pc = load_point_cloud(point_cloud)
         if isinstance(pc, torch.Tensor):
             pc = pc.cpu().numpy()
-        
+
         if pc.shape[1] == 3:
             colors = np.zeros_like(pc, dtype=np.float32)
             pc = np.concatenate([pc, colors], axis=1)
-        
+
+        pc = resample_point_cloud(pc, self.num_points)
         return torch.from_numpy(pc).float()
 
     def qa(self, data: Dict[str, Any], prompt: str) -> str:
@@ -750,6 +754,9 @@ class OneLLM(QAModelInstance):
         self.top_p = float(kwargs.get('top_p', 0.75))
         self.point_format = kwargs.get('point_format', 'xyzrgb')
         self.no_point_input = bool(kwargs.get('no_point_input', False))
+        # OneLLM PointPatchEmbed FPS-samples internally to ``sample_number`` (default 1024),
+        # so input N can be anything >= 1024. cap3d/PointLLM data ships at 8192.
+        self.num_points = int(kwargs.get('num_points', 8192))
 
         clip_pretrained_path = kwargs.get('clip_pretrained_path')
         clip_cache_dir = kwargs.get('clip_cache_dir')
@@ -810,12 +817,10 @@ class OneLLM(QAModelInstance):
 
     def _prepare_point_cloud(self, point_cloud: Union[np.ndarray, torch.Tensor, str]) -> torch.Tensor:
         pc = load_point_cloud(point_cloud)
-        if isinstance(pc, np.ndarray):
-            pc = torch.from_numpy(pc)
-        elif not isinstance(pc, torch.Tensor):
-            pc = torch.tensor(pc)
-
-        pc = pc.float()
+        if isinstance(pc, torch.Tensor):
+            pc = pc.cpu().numpy()
+        pc = resample_point_cloud(pc, self.num_points)
+        pc = torch.from_numpy(pc).float()
         pc = self.pc_norm(pc)
 
         # OneLLM PointPatchEmbed treats channels [:, :, 3:] as xyz.

@@ -20,6 +20,30 @@ def load_point_cloud(data):
 		return np.load(data)
 	raise ValueError(f"Unsupported point cloud input type: {type(data)}, value: {data}")
 
+
+def resample_point_cloud(pc: np.ndarray, num_points: int, fps_fn=None) -> np.ndarray:
+	"""Bring an (N, C) point cloud to exactly ``num_points`` rows.
+
+	- N == num_points: returned as-is
+	- N >  num_points: ``fps_fn(pc, num_points)`` if given, else random subsample
+	- N <  num_points: pad by sampling rows with replacement
+	Mirrors what each official 3D-LLM eval pipeline does to satisfy the model's
+	fixed input shape (typically 8192).
+	"""
+	n = pc.shape[0]
+	if n == num_points:
+		return pc
+	if n > num_points:
+		if fps_fn is not None:
+			out = fps_fn(pc, num_points)
+			if isinstance(out, torch.Tensor):
+				out = out.cpu().numpy()
+			return out
+		idx = np.random.choice(n, num_points, replace=False)
+		return pc[idx]
+	pad_idx = np.random.choice(n, num_points - n, replace=True)
+	return np.concatenate([pc, pc[pad_idx]], axis=0)
+
 	
 def make_options(choices, format='letter'):
 	assert format in ['numeric', 'letter']
