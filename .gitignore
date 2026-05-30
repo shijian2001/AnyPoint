@@ -175,3 +175,9 @@ test.py
 test_vis_layout.py
 
 configs/
+
+# Allow OneLLM source dirs that match generic ignore patterns above
+!models/dependence/onellm/model/lib/
+!models/dependence/onellm/model/lib/**
+!models/dependence/onellm/data/
+!models/dependence/onellm/data/**
