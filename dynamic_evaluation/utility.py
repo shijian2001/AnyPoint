@@ -2,7 +2,7 @@
 Information utility calculator.
 
 Formula:
-    U(t) = Affinity(t, E) · (1 - λ·Redundancy(t, C))
+    U(t) = Affinity(t, E) - λ·Redundancy(t, C)
 """
 
 from typing import Optional
@@ -31,8 +31,7 @@ class UtilityCalculator:
         """
         affinity = np.clip(self._max_sim(v_candidates, v_errors), 0.0, 1.0)
         redundancy = np.clip(self._max_sim(v_candidates, v_correct), 0.0, 1.0)
-        novelty = 1.0 - self.lambda_explore * redundancy
-        return affinity * novelty
+        return affinity - self.lambda_explore * redundancy
 
     def compute_strategy(
         self,
@@ -44,14 +43,13 @@ class UtilityCalculator:
         """Compute utility scores for one comparison strategy."""
         affinity = np.clip(self._max_sim(v_candidates, v_errors), 0.0, 1.0)
         redundancy = np.clip(self._max_sim(v_candidates, v_correct), 0.0, 1.0)
-        novelty = 1.0 - self.lambda_explore * redundancy
 
         if strategy == "dynamic":
-            return affinity * novelty
+            return affinity - self.lambda_explore * redundancy
         if strategy == "affinity_only":
             return affinity
         if strategy == "novelty_only":
-            return novelty
+            return -redundancy
 
         raise ValueError(f"Unknown utility strategy: {strategy}")
     

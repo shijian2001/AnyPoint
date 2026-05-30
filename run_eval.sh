@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-export CUDA_VISIBLE_DEVICES=2,3
+export CUDA_VISIBLE_DEVICES=4,5
 export HF_ENDPOINT=https://hf-mirror.com
-export SENTENCE_TRANSFORMERS_HOME=/home/wangxingjian/model
+export SENTENCE_TRANSFORMERS_HOME=/model
 
 
 # ShapeLLM
@@ -29,20 +29,20 @@ export SENTENCE_TRANSFORMERS_HOME=/home/wangxingjian/model
 # inference batch (model.generate batch dim). Official PointLLM eval default is 6.
 # For multi-GPU, set CUDA_VISIBLE_DEVICES=0,1,... and --devices cuda:0,cuda:1,...
 # (per-GPU subprocess sharding, like ShapeLLM official model_vqa --num-chunks).
-python3 compare_eval_strategies.py \
-  --metadata /home/wangxingjian/data/texverse/metadata.jsonl \
-  --pcd-dir /home/wangxingjian/data/texverse/points_npy \
-  --background-dir /home/wangxingjian/data/texverse/background \
-  --layouts /home/wangxingjian/AnyPoint/outputs_gpt_oss/layouts.json \
-  --model pointllm \
-  --checkpoint /home/wangxingjian/model/PointLLM_7B_v1.2 \
-  --output /home/wangxingjian/AnyPoint/output/pointllm \
-  --devices cuda:0,cuda:1 \
-  --budget 100 \
-  --batch-size 6 \
-  --pool-size 1000 \
-  --pool-cache-dir /home/wangxingjian/AnyPoint/output/task_pool_cache \
-  --lambda-explore 0.2
+# python3 compare_eval_strategies.py \
+#   --metadata /data/texverse/metadata.jsonl \
+#   --pcd-dir /data/texverse/points_npy \
+#   --background-dir /data/texverse/background \
+#   --layouts /AnyPoint/outputs_gpt_oss/layouts.json \
+#   --model pointllm \
+#   --checkpoint /model/PointLLM_7B_v1.2 \
+#   --output /AnyPoint/output/pointllm \
+#   --devices cuda:0,cuda:1 \
+#   --budget 100 \
+#   --batch-size 6 \
+#   --pool-size 1000 \
+#   --pool-cache-dir /AnyPoint/output/task_pool_cache \
+#   --lambda-explore 0.2
 
 # OneLLM
 # Single-GPU (batched inference inside generate via MetaModel.generate left-pad loop):
@@ -65,23 +65,23 @@ python3 compare_eval_strategies.py \
 #   --lambda-explore 0.2
 
 # Multi-GPU (fairscale tensor-parallel, like csuhan/OneLLM/demos/cli.py):
-# torchrun --nproc_per_node=2 --master_port=23862 /AnyPoint/compare_eval_strategies.py \
-#   --metadata /data/texverse/metadata.jsonl \
-#   --pcd-dir /data/texverse/points_npy \
-#   --background-dir /data/texverse/background \
-#   --layouts /AnyPoint/outputs_gpt_oss/layouts.json \
-#   --model onellm \
-#   --checkpoint /model/OneLLM-7B/consolidated.00-of-01.pth \
-#   --clip-pretrained-path /model/vit_large_patch14_clip_224/open_clip_pytorch_model.bin \
-#   --point-format xyzrgb \
-#   --offline true \
-#   --output /AnyPoint/output/compare_onellm \
-#   --devices cuda:0 \
-#   --budget 100 \
-#   --batch-size 4 \
-#   --pool-size 1000 \
-#   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
-#   --lambda-explore 0.2
+torchrun --nproc_per_node=2 --master_port=23862 compare_eval_strategies.py \
+  --metadata /data/point_cloud/texverse_metadata_000-000.jsonl \
+  --pcd-dir /data/point_cloud/npys_2k/000-000 \
+  --background-dir /data/point_cloud/background \
+  --layouts /AnyPoint/outputs_gpt_oss/layouts.json \
+  --model onellm \
+  --checkpoint /model/OneLLM-7B/consolidated.00-of-01.pth \
+  --clip-pretrained-path /model/vit_large_patch14_clip_224/open_clip_pytorch_model.bin \
+  --point-format xyzrgb \
+  --offline true \
+  --output /AnyPoint/output \
+  --devices cuda:0,cuda:1 \
+  --budget 100 \
+  --batch-size 4 \
+  --pool-size 1000 \
+  --pool-cache-dir /AnyPoint/output/task_pool_cache \
+  --lambda-explore 0.2
 
 # MiniGPT-3D
 # --batch-size mirrors the official MiniGPT-3D eval (batch=15).
