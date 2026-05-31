@@ -22,7 +22,7 @@ class MetaModel(nn.Module):
         with open(llama_config, "r") as f:
             params = json.loads(f.read())
         model_args: ModelArgs = ModelArgs(
-            max_seq_len=2048, max_batch_size=32, **params
+            max_seq_len=2048, max_batch_size=64, **params
         )
         self.tokenizer = Tokenizer(model_path=tokenizer_path)
         model_args.vocab_size = self.tokenizer.n_words

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from models.point_qa_model import PointQAModel
     from point_qa_generator.generator import PointQAGenerator
 
-UTILITY_STRATEGIES = ("dynamic", "affinity_only", "novelty_only")
+UTILITY_STRATEGIES = ("dynamic", "dynamic_mul", "affinity_only", "novelty_only")
 BASELINE_STRATEGIES = ("acd_style", "autobencher_style", "sea_style")
 ADAPTIVE_STRATEGIES = (*UTILITY_STRATEGIES, "acd_style", "sea_style")
 
@@ -989,26 +989,6 @@ def main() -> None:
             )
             for strategy in (*UTILITY_STRATEGIES, *BASELINE_STRATEGIES)
         }
-
-        # Lambda ablation on dynamic strategy
-        LAMBDA_ABLATION = (0.0, 0.1, 0.5, 1.0)
-        lambda_ablation_summaries = {}
-        for lam in LAMBDA_ABLATION:
-            if abs(lam - args.lambda_explore) < 1e-9:
-                continue
-            cfg_kwargs = dict(common_cfg)
-            cfg_kwargs["lambda_explore"] = lam
-            tag = f"dynamic_lambda_{lam:g}"
-            lambda_ablation_summaries[tag] = run_strategy(
-                "dynamic",
-                qa_gen,
-                model,
-                base_items,
-                EvalConfig(**cfg_kwargs),
-                os.path.join(args.output, tag),
-                shared_point_cloud_dir,
-                parallel_evaluator=parallel_evaluator,
-            )
     finally:
         if parallel_evaluator is not None:
             parallel_evaluator.close()
@@ -1025,7 +1005,6 @@ def main() -> None:
     compare_summary = {
         "random": random_summary["stats"],
         **{strategy: summary["stats"] for strategy, summary in strategy_summaries.items()},
-        **{tag: summary["stats"] for tag, summary in lambda_ablation_summaries.items()},
         "delta": {
             "errors": strategy_summaries["dynamic"]["stats"]["errors"] - random_summary["stats"]["errors"],
             "error_rate": (
@@ -1037,7 +1016,7 @@ def main() -> None:
                 "errors": summary["stats"]["errors"] - random_summary["stats"]["errors"],
                 "error_rate": summary["stats"]["error_rate"] - random_summary["stats"]["error_rate"],
             }
-            for strategy, summary in {**strategy_summaries, **lambda_ablation_summaries}.items()
+            for strategy, summary in strategy_summaries.items()
         },
     }
     compare_summary = _to_jsonable(compare_summary)

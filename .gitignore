@@ -165,7 +165,7 @@ cython_debug/
 
 .idea/
 
-data/
+/data/
 
 output_test/
 local_tests/

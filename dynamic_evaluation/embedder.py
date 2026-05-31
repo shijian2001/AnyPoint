@@ -27,6 +27,12 @@ class TaskEmbedder:
     def __init__(self, model_name: str = "all-mpnet-base-v2", device: str = None):
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        import os
+        st_home = os.environ.get("SENTENCE_TRANSFORMERS_HOME")
+        if st_home:
+            local_path = os.path.join(st_home, model_name)
+            if os.path.isdir(local_path):
+                model_name = local_path
         self.model = SentenceTransformer(model_name, device=device)
         self.dim = self.model.get_sentence_embedding_dimension()
     

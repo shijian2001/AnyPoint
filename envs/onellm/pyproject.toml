@@ -81,19 +81,19 @@ dependencies = [
     "shellingham==1.5.4",
     "six==1.17.0",
     "starlette==0.52.1",
-    "sympy==1.14.0",
+    "sympy==1.13.1",
     "tabulate==0.9.0",
     "termcolor==3.3.0",
     "threadpoolctl==3.6.0",
     "timm==1.0.25",
     "tokenizers==0.22.2",
     "tomlkit==0.13.3",
-    "torch==2.9.0+cu130",
-    "torchaudio==2.9.0+cu130",
-    "torchvision==0.24.0+cu130",
+    "torch==2.5.1+cu121",
+    "torchaudio==2.5.1+cu121",
+    "torchvision==0.20.1+cu121",
     "tqdm==4.66.5",
     "transformers==5.2.0",
-    "triton==3.5.0",
+    "triton==3.1.0",
     "typer==0.24.1",
     "typer-slim==0.24.0",
     "typing-extensions==4.15.0",
@@ -104,16 +104,12 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-flash-attn = { url = "https://gh-proxy.org/https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu130torch2.9-cp311-cp311-linux_x86_64.whl" }
-torch = { index = "pytorch-cu130" }
-torchvision = { index = "pytorch-cu130" }
-torchaudio = { index = "pytorch-cu130" }
+flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3%2Bcu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl" }
+torch = { index = "pytorch-cu121" }
+torchvision = { index = "pytorch-cu121" }
+torchaudio = { index = "pytorch-cu121" }
 
 [[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
 explicit = true
-
-[[tool.uv.index]]
-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
-default = true
