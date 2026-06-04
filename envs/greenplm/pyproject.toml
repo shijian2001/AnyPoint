@@ -24,6 +24,7 @@ dependencies = [
     "networkx==3.6.1",
     "numpy==2.3.5",
     "open-clip-torch==3.2.0",
+    "openai>=2.38.0",
     "packaging==24.1",
     "peft==0.18.0",
     "pillow==12.0.0",
@@ -31,6 +32,7 @@ dependencies = [
     "protobuf==6.33.2",
     "psutil==7.2.1",
     "pyyaml==6.0.3",
+    "qwen-vl-utils>=0.0.14",
     "regex==2025.11.3",
     "requests==2.28.1",
     "safetensors==0.7.0",
@@ -58,6 +60,9 @@ dependencies = [
 pointnet2-ops = { path = "/home/wangxingjian/Pointnet2_PyTorch/pointnet2_ops_lib", editable = true }
 torch = { index = "pytorch-cu130" }
 torchvision = { index = "pytorch-cu130" }
+
+[tool.uv.extra-build-dependencies]
+pointnet2-ops = ["torch"]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"

@@ -212,16 +212,14 @@ class PointLLM(QAModelInstance):
         self.max_new_tokens = kwargs.get('max_new_tokens', 512)
         self.num_points = int(kwargs.get('num_points', 8192))
 
-        from models.dependence.pointllm.model import PointLLMLlamaForCausalLM  
-        from models.dependence.pointllm.conversation import conv_templates 
-        from models.dependence.pointllm.utils import disable_torch_init  
-        from models.dependence.pointllm.data import pc_norm 
-        from models.dependence.pointllm.data.utils import farthest_point_sample
+        from models.dependence.pointllm.model import PointLLMLlamaForCausalLM
+        from models.dependence.pointllm.conversation import conv_templates
+        from models.dependence.pointllm.utils import disable_torch_init
+        from models.dependence.pointllm.data import pc_norm
         from transformers import AutoTokenizer
 
         self.conv_templates = conv_templates
         self.pc_norm = pc_norm
-        self.farthest_point_sample = farthest_point_sample
         
         disable_torch_init()
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
@@ -234,7 +232,25 @@ class PointLLM(QAModelInstance):
         pc = load_point_cloud(point_cloud)
         if isinstance(pc, torch.Tensor):
             pc = pc.cpu().numpy()
-        pc = resample_point_cloud(pc, self.num_points, fps_fn=self.farthest_point_sample)
+        n = pc.shape[0]
+        if n < self.num_points:
+            pc = resample_point_cloud(pc, self.num_points)
+        elif n > self.num_points:
+            # GPU FPS using PointBERT official torch impl (models.dependence.pointllm.model.pointbert.misc).
+            # We replicate its index loop here so we can gather all channels (xyzrgb), not just xyz.
+            t = torch.from_numpy(pc).float().to(self.device).unsqueeze(0)  # (1, N, C)
+            xyz = t[..., :3].contiguous()
+            npoint = self.num_points
+            centroids = torch.zeros(1, npoint, dtype=torch.long, device=self.device)
+            distance = torch.full((1, n), 1e10, device=self.device)
+            farthest = torch.randint(0, n, (1,), dtype=torch.long, device=self.device)
+            for i in range(npoint):
+                centroids[:, i] = farthest
+                centroid = xyz[0, farthest, :].view(1, 1, 3)
+                dist = ((xyz - centroid) ** 2).sum(-1)
+                distance = torch.min(distance, dist)
+                farthest = distance.max(-1)[1]
+            pc = t[0, centroids[0], :].cpu().numpy()
         pc = self.pc_norm(pc)
         return torch.from_numpy(pc).float().to(self.device)
 
@@ -780,27 +796,28 @@ class OneLLM(QAModelInstance):
         self.conv_templates = conv_templates
         self.pc_norm = pc_norm
 
-        master_port = int(kwargs.get('master_port', 23591))
-        external_dist_init = bool(kwargs.get('_external_dist_init', False))
-        if not external_dist_init:
-            if not dist.is_initialized():
-                dist.init_process_group(
-                    backend='nccl',
-                    rank=0,
-                    world_size=1,
-                    init_method=f'tcp://127.0.0.1:{master_port}',
-                )
-            if not fs_init.model_parallel_is_initialized():
-                fs_init.initialize_model_parallel(1)
-        # else: parent (mp.spawn / torchrun) already initialized dist + fairscale TP
-        self.tp_world_size = dist.get_world_size() if dist.is_initialized() else 1
-        self.tp_rank = dist.get_rank() if dist.is_initialized() else 0
-
+        # Each process loads its own full OneLLM on a single GPU (no tensor parallel).
+        # MetaModel still uses fairscale ColumnParallel/RowParallel layers, so we have
+        # to initialize a degenerate world_size=1 process group + model-parallel group.
         gpu_id = 0
-        if ':' in str(self.device):
-            gpu_id = int(str(self.device).split(':')[-1])
+        if ":" in str(self.device):
+            gpu_id = int(str(self.device).split(":")[-1])
         torch.cuda.set_device(gpu_id)
-        setup_for_distributed(self.tp_rank == 0)
+
+        if not dist.is_initialized():
+            base_port = int(kwargs.get('master_port', 23591))
+            # Disambiguate port across concurrent per-GPU subprocesses (each subprocess
+            # only sees CUDA_VISIBLE_DEVICES[gpu_id], but receives a stable device str).
+            master_port = base_port + gpu_id
+            dist.init_process_group(
+                backend='nccl',
+                rank=0,
+                world_size=1,
+                init_method=f'tcp://127.0.0.1:{master_port}',
+            )
+        if not fs_init.model_parallel_is_initialized():
+            fs_init.initialize_model_parallel(1)
+        setup_for_distributed(True)
 
         self.target_dtype = {'bf16': torch.bfloat16, 'fp16': torch.float16}[self.dtype_name]
         dep_root = os.path.join(os.path.dirname(__file__), 'dependence', 'onellm')
@@ -854,14 +871,9 @@ class OneLLM(QAModelInstance):
         return response[len(prompt_text):].split('###')[0].strip()
 
     def qa_batch(self, datas: List[Dict[str, Any]], prompts: List[str]) -> List[str]:
-        """Batched OneLLM inference. MetaModel.generate already accepts List[str] +
-        batched ``images`` and performs left-padded autoregressive decode internally
-        (see csuhan/OneLLM model/meta.py L60-110).
-
-        Under fairscale tensor-parallel (launched via torchrun --nproc_per_node=N),
-        rank 0 broadcasts the inputs to all ranks; every rank calls ``generate``
-        collectively. Only rank 0 returns the decoded strings.
-        """
+        """Batched OneLLM inference. MetaModel.generate accepts List[str] + batched
+        images and runs left-padded autoregressive decode internally
+        (csuhan/OneLLM model/meta.py L60-110). Single-GPU per process."""
         if not datas:
             return []
         pcs = []
@@ -882,17 +894,6 @@ class OneLLM(QAModelInstance):
             conv.append_message(conv.roles[1], None)
             prompt_texts.append(conv.get_prompt())
 
-        if self.tp_world_size > 1:
-            import torch.distributed as dist
-            payload = [{
-                "cmd": "generate",
-                "prompts": prompt_texts,
-                "shape": tuple(model_points.shape),
-                "dtype": str(model_points.dtype),
-            }]
-            dist.broadcast_object_list(payload, src=0)
-            dist.broadcast(model_points, src=0)
-
         with torch.cuda.amp.autocast(dtype=self.target_dtype):
             responses = self.model.generate(
                 prompt_texts,
@@ -906,48 +907,6 @@ class OneLLM(QAModelInstance):
         for resp, pt in zip(responses, prompt_texts):
             outs.append(resp[len(pt):].split('###')[0].strip())
         return outs
-
-    def tp_worker_loop(self) -> None:
-        """Worker loop for non-zero ranks under fairscale tensor-parallel.
-
-        Receives (prompts, points) broadcasts from rank 0, participates in the
-        collective ``MetaModel.generate`` call, and exits when rank 0 sends
-        ``cmd='exit'``. Only used in OneLLM TP mode.
-        """
-        import torch.distributed as dist
-        assert self.tp_world_size > 1, "tp_worker_loop requires TP world_size > 1"
-        while True:
-            payload = [None]
-            dist.broadcast_object_list(payload, src=0)
-            msg = payload[0]
-            if msg is None or msg.get("cmd") == "exit":
-                return
-            if msg["cmd"] != "generate":
-                raise ValueError(f"Unknown TP command: {msg['cmd']}")
-            shape = msg["shape"]
-            dtype = {
-                "torch.float16": torch.float16,
-                "torch.bfloat16": torch.bfloat16,
-                "torch.float32": torch.float32,
-            }[msg["dtype"]]
-            buf = torch.empty(shape, dtype=dtype, device='cuda')
-            dist.broadcast(buf, src=0)
-            with torch.cuda.amp.autocast(dtype=self.target_dtype):
-                self.model.generate(
-                    msg["prompts"],
-                    buf,
-                    self.max_new_tokens,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    modal=['point'],
-                )
-
-    def tp_signal_exit(self) -> None:
-        """Tell non-zero ranks to leave their TP worker loop. Called on rank 0."""
-        if self.tp_world_size <= 1:
-            return
-        import torch.distributed as dist
-        dist.broadcast_object_list([{"cmd": "exit"}], src=0)
 
 
 class ThreeDR1(QAModelInstance):

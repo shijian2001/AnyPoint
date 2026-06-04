@@ -7,11 +7,27 @@ cd "$(dirname "$0")"
 
 export CUDA_VISIBLE_DEVICES=4,5
 export HF_ENDPOINT=https://hf-mirror.com
-export SENTENCE_TRANSFORMERS_HOME=/root/weishuai/model
+export SENTENCE_TRANSFORMERS_HOME=/home/wangxingjian/model
+
+# ----------------------------------------------------------------------------
+# Available --strategies values (always run alongside the implicit "random" baseline):
+#   utility-guided (UTILITY_STRATEGIES):
+#     dynamic        : U = A - λ·R                          (subtractive)
+#     dynamic_mul    : U = A · (1 - λ·R)                    (heuristic mul gating)
+#     dynamic_geo    : U = A^(1-λ) · (1-R)^λ, λ∈[0,1]      (weighted geo mean, exp form)
+#     dynamic_geo_log: log U = (1-λ)·log A + λ·log(1-R)     (= geo, log-space — argmax-equivalent, more stable)
+#     affinity_only  : U = A
+#     novelty_only   : U = log(1 - R)
+#   external baselines (BASELINE_STRATEGIES):
+#     acd_style, autobencher_style, sea_style
+#
+# Shortcuts: 'all' (default), 'utility', 'baselines', or comma list e.g.
+#   --strategies dynamic_geo,dynamic,dynamic_mul
+# ----------------------------------------------------------------------------
 
 
 # ShapeLLM
-# python3 /AnyPoint/compare_eval_strategies.py \
+# python3 compare_eval_strategies.py \
 #   --metadata /data/texverse/metadata.jsonl \
 #   --pcd-dir /data/texverse/points_npy \
 #   --background-dir /data/texverse/background \
@@ -26,66 +42,49 @@ export SENTENCE_TRANSFORMERS_HOME=/root/weishuai/model
 #   --batch-size 10 \
 #   --pool-size 1000 \
 #   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
+#   --strategies all \
 #   --lambda-explore 0.2
 
 # PointLLM
 python3 compare_eval_strategies.py \
-  --metadata /root/weishuai/data/point_cloud/texverse_metadata_000-000.jsonl \
-  --pcd-dir /root/weishuai/data/point_cloud/npys_2k/000-000 \
-  --background-dir /root/weishuai/data/point_cloud/background \
-  --layouts /root/weishuai/AnyPoint/outputs_gpt_oss/layouts.json \
+  --metadata /home/wangxingjian/data/point_cloud/texverse_metadata_000-000.jsonl \
+  --pcd-dir /home/wangxingjian/data/point_cloud/npys_2k/000-000 \
+  --background-dir /home/wangxingjian/data/point_cloud/background \
+  --layouts /home/wangxingjian/AnyPoint/outputs_gpt_oss/layouts.json \
   --model pointllm \
-  --checkpoint /root/weishuai/model/PointLLM_7B_v1.2 \
-  --output /root/weishuai/AnyPoint/output/pointllm \
+  --checkpoint /home/wangxingjian/model/PointLLM_7B_v1.2 \
+  --output /home/wangxingjian/AnyPoint/output/pointllm \
   --devices cuda:0,cuda:1 \
   --budget 200 \
   --batch-size 10 \
   --pool-size 1000 \
-  --pool-cache-dir /root/weishuai/AnyPoint/output \
+  --pool-cache-dir /home/wangxingjian/AnyPoint/output/task_pool_cache \
+  --strategies dynamic_geo,dynamic_geo_log \
   --lambda-explore 0.2
 
 # OneLLM
-# Single-GPU (batched inference inside generate via MetaModel.generate left-pad loop):
 # python3 compare_eval_strategies.py \
-#   --metadata /root/weishuai/data/point_cloud/texverse_metadata_000-000.jsonl \
-#   --pcd-dir /root/weishuai/data/point_cloud/npys_2k/000-000 \
-#   --background-dir /root/weishuai/data/point_cloud/background \
-#   --layouts /root/weishuai/AnyPoint/outputs_gpt_oss/layouts.json \
+#   --metadata /home/wangxingjian/data/point_cloud/texverse_metadata_000-000.jsonl \
+#   --pcd-dir /home/wangxingjian/data/point_cloud/npys_2k/000-000 \
+#   --background-dir /home/wangxingjian/data/point_cloud/background \
+#   --layouts /home/wangxingjian/AnyPoint/outputs_gpt_oss/layouts.json \
 #   --model onellm \
-#   --checkpoint /root/weishuai/model/OneLLM-7B/consolidated.00-of-01.pth \
-#   --clip-pretrained-path /root/weishuai/model/vit_large_patch14_clip_224/open_clip_pytorch_model.bin \
+#   --checkpoint /home/wangxingjian/model/OneLLM-7B/consolidated.00-of-01.pth \
+#   --clip-pretrained-path /home/wangxingjian/model/vit_large_patch14_clip_224/open_clip_pytorch_model.bin \
 #   --point-format xyzrgb \
 #   --offline true \
-#   --output /root/weishuai/AnyPoint/output \
-#   --devices cuda:0\
-#   --budget 200 \
-#   --batch-size 50 \
-#   --pool-size 1000 \
-#   --pool-cache-dir /root/weishuai/AnyPoint/output \
-#   --lambda-explore 0.2
-
-# Multi-GPU (fairscale tensor-parallel, like csuhan/OneLLM/demos/cli.py):
-# torchrun --nproc_per_node=2 --master_port=23862 compare_eval_strategies.py \
-#   --metadata /root/weishuai/data/point_cloud/texverse_metadata_000-000.jsonl \
-#   --pcd-dir /root/weishuai/data/point_cloud/npys_2k/000-000 \
-#   --background-dir /root/weishuai/data/point_cloud/background \
-#   --layouts /root/weishuai/AnyPoint/outputs_gpt_oss/layouts.json \
-#   --model onellm \
-#   --checkpoint /root/weishuai/model/OneLLM-7B/consolidated.00-of-01.pth \
-#   --clip-pretrained-path /root/weishuai/model/vit_large_patch14_clip_224/open_clip_pytorch_model.bin \
-#   --point-format xyzrgb \
-#   --offline true \
-#   --output /root/weishuai/AnyPoint/output \
+#   --output /home/wangxingjian/AnyPoint/output/onellm \
 #   --devices cuda:0,cuda:1 \
-#   --budget 100 \
-#   --batch-size 4 \
+#   --budget 200 \
+#   --batch-size 10 \
 #   --pool-size 1000 \
-#   --pool-cache-dir /root/weishuai/AnyPoint/output \
+#   --pool-cache-dir /home/wangxingjian/AnyPoint/output/task_pool_cache \
+#   --strategies all \
 #   --lambda-explore 0.2
 
 # MiniGPT-3D
 # --batch-size mirrors the official MiniGPT-3D eval (batch=15).
-# python3 /AnyPoint/compare_eval_strategies.py \
+# python3 compare_eval_strategies.py \
 #   --metadata /data/texverse/metadata.jsonl \
 #   --pcd-dir /data/texverse/points_npy \
 #   --background-dir /data/texverse/background \
@@ -98,10 +97,11 @@ python3 compare_eval_strategies.py \
 #   --batch-size 15 \
 #   --pool-size 1000 \
 #   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
+#   --strategies all \
 #   --lambda-explore 0.2
 
 # PointAlign
-# python3 /AnyPoint/compare_eval_strategies.py \
+# python3 compare_eval_strategies.py \
 #   --metadata /data/texverse/metadata.jsonl \
 #   --pcd-dir /data/texverse/points_npy \
 #   --background-dir /data/texverse/background \
@@ -121,25 +121,27 @@ python3 compare_eval_strategies.py \
 #   --batch-size 10 \
 #   --pool-size 1000 \
 #   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
+#   --strategies all \
 #   --lambda-explore 0.2
 
 # GreenPLM
-# python3 /AnyPoint/compare_eval_strategies.py \
-#   --metadata /data/texverse/metadata.jsonl \
-#   --pcd-dir /data/texverse/points_npy \
-#   --background-dir /data/texverse/background \
-#   --layouts /AnyPoint/outputs_gpt_oss/layouts.json \
+# python3 compare_eval_strategies.py \
+#   --metadata /home/wangxingjian/data/point_cloud/texverse_metadata_000-000.jsonl \
+#   --pcd-dir /home/wangxingjian/data/point_cloud/npys_2k/000-000 \
+#   --background-dir /home/wangxingjian/data/point_cloud/background \
+#   --layouts /home/wangxingjian/AnyPoint/outputs_gpt_oss/layouts.json \
 #   --model greenplm \
-#   --model-path /PointQA_Eval/cankao/GreenPLM/lava-vicuna_2024_4_Phi-3-mini-4k-instruct \
-#   --lora-path /PointQA_Eval/cankao/GreenPLM/release/paper/weight/stage_3 \
-#   --pretrain-mm-mlp-adapter /PointQA_Eval/cankao/GreenPLM/release/paper/weight/stage_3/non_lora_trainables.bin \
-#   --pc-ckpt-path /PointQA_Eval/cankao/GreenPLM/pretrained_weight/Uni3D_PC_encoder/modelzoo/uni3d-small/model.pt \
+#   --model-path /home/wangxingjian/model/greenplm/lava-vicuna_2024_4_Phi-3-mini-4k-instruct \
+#   --lora-path /home/wangxingjian/model/greenplm/release/paper/weight/stage_3 \
+#   --pretrain-mm-mlp-adapter /home/wangxingjian/model/greenplm/release/paper/weight/stage_3/non_lora_trainables.bin \
+#   --pc-ckpt-path /home/wangxingjian/model/greenplm/pretrained_weight/Uni3D_PC_encoder/modelzoo/uni3d-small/model.pt \
 #   --pc-encoder-type small \
 #   --get-pc-tokens-way OM_Pooling \
-#   --output /AnyPoint/output/compare_greenplm \
+#   --output /home/wangxingjian/AnyPoint/output/greenplm \
 #   --devices cuda:0 \
-#   --budget 100 \
+#   --budget 200 \
 #   --batch-size 10 \
 #   --pool-size 1000 \
-#   --pool-cache-dir /AnyPoint/output/pointllm_dyn/task_pool_cache \
+#   --pool-cache-dir /home/wangxingjian/AnyPoint/output/task_pool_cache \
+#   --strategies all \
 #   --lambda-explore 0.2

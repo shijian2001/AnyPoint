@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from models.point_qa_model import PointQAModel
     from point_qa_generator.generator import PointQAGenerator
 
-UTILITY_STRATEGIES = ("dynamic", "dynamic_mul", "affinity_only", "novelty_only")
+UTILITY_STRATEGIES = ("dynamic", "dynamic_mul", "dynamic_geo", "dynamic_geo_log", "affinity_only", "novelty_only")
 BASELINE_STRATEGIES = ("acd_style", "autobencher_style", "sea_style")
 ADAPTIVE_STRATEGIES = (*UTILITY_STRATEGIES, "acd_style", "sea_style")
 
@@ -465,7 +465,18 @@ def run_strategy(
         embedder = TaskEmbedder(device="cpu") if parallel_evaluator is not None else TaskEmbedder()
     else:
         embedder = None
-    utility_calc = UtilityCalculator(cfg.lambda_explore) if strategy in UTILITY_STRATEGIES else None
+    _utility_form_by_strategy = {
+        "dynamic": "sub",
+        "dynamic_mul": "mul",
+        "dynamic_geo": "geo",
+        "dynamic_geo_log": "geo_log",
+        "affinity_only": "sub",
+        "novelty_only": "geo_log",
+    }
+    utility_calc = (
+        UtilityCalculator(cfg.lambda_explore, form=_utility_form_by_strategy[strategy])
+        if strategy in UTILITY_STRATEGIES else None
+    )
     sea_state = (
         SEAState(embedder=embedder, rng=np.random.RandomState(cfg.seed + 1))
         if strategy == "sea_style"
@@ -851,6 +862,15 @@ def main() -> None:
     )
     parser.add_argument("--cfg-path")
     parser.add_argument("--prompt-template")
+    parser.add_argument(
+        "--strategies",
+        default="all",
+        help=(
+            "Comma-separated subset of strategies to run, in addition to the always-on "
+            "'random' baseline. Available: " + ",".join((*UTILITY_STRATEGIES, *BASELINE_STRATEGIES)) +
+            ". Use 'all' for the full set, 'utility' for utility-only, 'baselines' for baselines-only."
+        ),
+    )
 
     args, unknown = parser.parse_known_args()
     extra_kwargs = _parse_unknown_args(unknown)
@@ -859,18 +879,7 @@ def main() -> None:
     if args.model not in ["minigpt3d", "pointalign", "greenplm", "gpt4point"] and not checkpoint_path:
         raise ValueError("--checkpoint or --test-ckpt is required for this model")
 
-    # OneLLM tensor-parallel mode: rank > 0 ranks must NOT validate CUDA ordinals
-    # against CUDA_VISIBLE_DEVICES (torchrun pins each rank to its own visible GPU).
-    is_torchrun = "RANK" in os.environ and "WORLD_SIZE" in os.environ
-    if is_torchrun:
-        rank = int(os.environ["RANK"])
-        world_size = int(os.environ["WORLD_SIZE"])
-        local_rank = int(os.environ.get("LOCAL_RANK", rank))
-        devices = [f"cuda:{local_rank}"]
-    else:
-        devices = resolve_devices(args.devices, cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"))
-        rank = 0
-        world_size = 1
+    devices = resolve_devices(args.devices, cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"))
 
     qa_gen = PointQAGenerator(
         metadata_file=args.metadata,
@@ -883,39 +892,7 @@ def main() -> None:
     model: Optional[PointQAModel] = None
     parallel_evaluator: Optional[MultiGpuBatchEvaluator] = None
 
-    if is_torchrun and args.model == "onellm":
-        # ---- OneLLM fairscale tensor-parallel multi-GPU path ----
-        import torch.distributed as dist
-        from fairscale.nn.model_parallel import initialize as fs_init
-
-        if not dist.is_initialized():
-            dist.init_process_group(backend="nccl")
-        if not fs_init.model_parallel_is_initialized():
-            fs_init.initialize_model_parallel(world_size)
-        torch.cuda.set_device(local_rank)
-
-        onellm_kwargs = dict(extra_kwargs)
-        onellm_kwargs["_external_dist_init"] = True
-        model = _build_model(
-            model_name=args.model,
-            checkpoint_path=checkpoint_path,
-            output_dir=args.output,
-            device=devices[0],
-            cfg_path=args.cfg_path,
-            prompt_template=args.prompt_template,
-            model_kwargs=onellm_kwargs,
-        )
-
-        if rank != 0:
-            # Non-zero TP ranks just service generate broadcasts and exit when told.
-            inner = model.model  # OneLLM instance
-            try:
-                inner.tp_worker_loop()
-            finally:
-                if dist.is_initialized():
-                    dist.destroy_process_group()
-            return
-    elif len(devices) == 1:
+    if len(devices) == 1:
         model = _build_model(
             model_name=args.model,
             checkpoint_path=checkpoint_path,
@@ -926,11 +903,6 @@ def main() -> None:
             model_kwargs=extra_kwargs,
         )
     else:
-        if args.model == "onellm":
-            raise ValueError(
-                "OneLLM multi-GPU requires fairscale tensor-parallel via torchrun. "
-                "Launch with: torchrun --nproc_per_node=N compare_eval_strategies.py --devices cuda:0 ..."
-            )
         print(f"[INFO] Multi-GPU evaluation enabled (per-GPU subprocess): {', '.join(devices)}")
         parallel_evaluator = MultiGpuBatchEvaluator(
             RuntimeConfig(
@@ -976,6 +948,25 @@ def main() -> None:
             shared_point_cloud_dir,
             parallel_evaluator=parallel_evaluator,
         )
+        all_strategies = (*UTILITY_STRATEGIES, *BASELINE_STRATEGIES)
+        if args.strategies in (None, "", "all"):
+            selected_strategies = list(all_strategies)
+        elif args.strategies == "utility":
+            selected_strategies = list(UTILITY_STRATEGIES)
+        elif args.strategies == "baselines":
+            selected_strategies = list(BASELINE_STRATEGIES)
+        else:
+            selected_strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
+            # "random" is the implicit baseline (always runs); silently accept it.
+            selected_strategies = [s for s in selected_strategies if s != "random"]
+            unknown_strategies = [s for s in selected_strategies if s not in all_strategies]
+            if unknown_strategies:
+                raise ValueError(
+                    f"Unknown --strategies values: {unknown_strategies}. "
+                    f"Choose from: {list(all_strategies)} (or all/utility/baselines; "
+                    f"'random' is implicit and always runs)"
+                )
+        print(f"[INFO] Strategies to run: random, {', '.join(selected_strategies)}")
         strategy_summaries = {
             strategy: run_strategy(
                 strategy,
@@ -987,30 +978,15 @@ def main() -> None:
                 shared_point_cloud_dir,
                 parallel_evaluator=parallel_evaluator,
             )
-            for strategy in (*UTILITY_STRATEGIES, *BASELINE_STRATEGIES)
+            for strategy in selected_strategies
         }
     finally:
         if parallel_evaluator is not None:
             parallel_evaluator.close()
-        # OneLLM TP rank-0 cleanup: tell other ranks to exit.
-        if is_torchrun and args.model == "onellm" and rank == 0 and model is not None:
-            try:
-                model.model.tp_signal_exit()
-            except Exception:
-                pass
-            import torch.distributed as dist
-            if dist.is_initialized():
-                dist.destroy_process_group()
 
     compare_summary = {
         "random": random_summary["stats"],
         **{strategy: summary["stats"] for strategy, summary in strategy_summaries.items()},
-        "delta": {
-            "errors": strategy_summaries["dynamic"]["stats"]["errors"] - random_summary["stats"]["errors"],
-            "error_rate": (
-                strategy_summaries["dynamic"]["stats"]["error_rate"] - random_summary["stats"]["error_rate"]
-            ),
-        },
         "delta_vs_random": {
             strategy: {
                 "errors": summary["stats"]["errors"] - random_summary["stats"]["errors"],
@@ -1019,6 +995,13 @@ def main() -> None:
             for strategy, summary in strategy_summaries.items()
         },
     }
+    if "dynamic" in strategy_summaries:
+        compare_summary["delta"] = {
+            "errors": strategy_summaries["dynamic"]["stats"]["errors"] - random_summary["stats"]["errors"],
+            "error_rate": (
+                strategy_summaries["dynamic"]["stats"]["error_rate"] - random_summary["stats"]["error_rate"]
+            ),
+        }
     compare_summary = _to_jsonable(compare_summary)
     compare_path = os.path.join(args.output, "compare_summary.json")
     with open(compare_path, "w", encoding="utf-8") as f:
