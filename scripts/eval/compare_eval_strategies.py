@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from models.point_qa_model import PointQAModel
     from point_qa_generator.generator import PointQAGenerator
 
-UTILITY_STRATEGIES = ("dynamic", "dynamic_mul", "dynamic_geo", "dynamic_geo_log", "affinity_only", "novelty_only")
+UTILITY_STRATEGIES = ("tradeoff", "tradeoff_log", "linear", "gated", "exploit_only", "explore_only")
 BASELINE_STRATEGIES = ("acd_style", "autobencher_style", "sea_style")
 ADAPTIVE_STRATEGIES = (*UTILITY_STRATEGIES, "acd_style", "sea_style")
 
@@ -466,12 +466,12 @@ def run_strategy(
     else:
         embedder = None
     _utility_form_by_strategy = {
-        "dynamic": "sub",
-        "dynamic_mul": "mul",
-        "dynamic_geo": "geo",
-        "dynamic_geo_log": "geo_log",
-        "affinity_only": "sub",
-        "novelty_only": "geo_log",
+        "tradeoff": "tradeoff",
+        "tradeoff_log": "tradeoff_log",
+        "linear": "linear",
+        "gated": "gated",
+        "exploit_only": "linear",
+        "explore_only": "tradeoff_log",
     }
     utility_calc = (
         UtilityCalculator(cfg.lambda_explore, form=_utility_form_by_strategy[strategy])
@@ -995,11 +995,11 @@ def main() -> None:
             for strategy, summary in strategy_summaries.items()
         },
     }
-    if "dynamic" in strategy_summaries:
+    if "tradeoff" in strategy_summaries:
         compare_summary["delta"] = {
-            "errors": strategy_summaries["dynamic"]["stats"]["errors"] - random_summary["stats"]["errors"],
+            "errors": strategy_summaries["tradeoff"]["stats"]["errors"] - random_summary["stats"]["errors"],
             "error_rate": (
-                strategy_summaries["dynamic"]["stats"]["error_rate"] - random_summary["stats"]["error_rate"]
+                strategy_summaries["tradeoff"]["stats"]["error_rate"] - random_summary["stats"]["error_rate"]
             ),
         }
     compare_summary = _to_jsonable(compare_summary)
