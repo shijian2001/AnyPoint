@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anypoint"
+version = "1.0.0"
+description = "AnyPoint: programmatic 3D point-cloud QA dataset generation and evaluation"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy<2",
+    "open3d",
+    "trimesh",
+    "tqdm",
+    "matplotlib",
+    "scikit-learn",
+    "openai",
+    "python-dotenv",
+    "pyyaml",
+    "torch",
+    "torchvision",
+    "qwen_vl_utils",
+    "sentence-transformers",
+    "diskcache",
+    "easydict",
+    "timm",
+    "termcolor",
+    "tiktoken",
+]
+
+# Only ship the actual library packages; exclude scripts/, data/, logs, etc.
+[tool.setuptools]
+packages = [
+    "point_qa_generator",
+    "layout_generator",
+    "dynamic_evaluation",
+    "visualizer",
+    "models",
+]

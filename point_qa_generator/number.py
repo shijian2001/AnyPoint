@@ -110,6 +110,7 @@ class CountObjectGenerator(NumberGenerator):
                             "generator_type": task_plan.generator_type,
                             "generator_config": task_plan.generator_config,
                             "layout_id": layout.get("id"),
+                            "background_id": self._last_background_id,
                             "layout_description": layout.get("description"),
                             "objects": [
                                 {
@@ -201,6 +202,7 @@ class FrequentObjectGenerator(NumberGenerator):
                             "generator_type": task_plan.generator_type,
                             "generator_config": task_plan.generator_config,
                             "layout_id": layout.get("id"),
+                            "background_id": self._last_background_id,
                             "layout_description": layout.get("description"),
                             "objects": [
                                 {
@@ -297,6 +299,7 @@ class ListAttributeFrequentGenerator(NumberGenerator):
                             "generator_type": task_plan.generator_type,
                             "generator_config": task_plan.generator_config,
                             "layout_id": layout.get("id"),
+                            "background_id": self._last_background_id,
                             "layout_description": layout.get("description"),
                             "objects": [
                                 {
@@ -400,6 +403,7 @@ class CountAttributeFrequentGenerator(NumberGenerator):
                             "generator_type": task_plan.generator_type,
                             "generator_config": task_plan.generator_config,
                             "layout_id": layout.get("id"),
+                            "background_id": self._last_background_id,
                             "layout_description": layout.get("description"),
                             "objects": [
                                 {

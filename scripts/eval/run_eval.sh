@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+# Run from this script's own directory so the relative compare_eval_strategies.py
+# reference resolves regardless of the caller's working directory.
+cd "$(dirname "$0")"
+
 export CUDA_VISIBLE_DEVICES=4,5
 export HF_ENDPOINT=https://hf-mirror.com
 export SENTENCE_TRANSFORMERS_HOME=/root/weishuai/model

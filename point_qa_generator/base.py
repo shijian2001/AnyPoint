@@ -99,6 +99,10 @@ class BasePointQAGenerator(ABC):
         self.rng = np.random.RandomState(seed)
         self.background_dir = background_dir
         self.background_files = self._scan_backgrounds(background_dir)
+        # Records the background filename (or None) used by the most recent
+        # _create_point_cloud_from_layout call, so generators can persist it
+        # into task metadata for deterministic reproduction.
+        self._last_background_id = None
         self.layouts = layouts or []
         self._layouts_by_min_count = self._build_layout_index(self.layouts)
 
@@ -165,9 +169,10 @@ class BasePointQAGenerator(ABC):
         return layout, object_mapping
 
     def _create_point_cloud_from_layout(
-        self, 
-        layout: Dict, 
-        object_mapping: Dict[str, Dict]
+        self,
+        layout: Dict,
+        object_mapping: Dict[str, Dict],
+        background_id: Optional[str] = "__random__",
     ) -> np.ndarray:
         """Create point cloud scene from layout and object mapping.
         
@@ -185,9 +190,9 @@ class BasePointQAGenerator(ABC):
             Combined scene point cloud (N, 3+)
         """
         point_clouds = []
-        background = self._load_background(layout, object_mapping)
+        background = self._load_background(layout, object_mapping, background_id=background_id)
         support_y = get_support_height(background)
-        
+
         for obj_spec in layout["objects"]:
             obj_name = obj_spec["name"]
             actual_obj = object_mapping[obj_name]
@@ -200,16 +205,41 @@ class BasePointQAGenerator(ABC):
 
         return np.vstack(point_clouds)
 
-    def _load_background(self, layout: Dict, object_mapping: Dict[str, Dict]) -> Optional[np.ndarray]:
-        if not self.background_files:
-            return None
+    def _load_background(
+        self,
+        layout: Dict,
+        object_mapping: Dict[str, Dict],
+        background_id: Optional[str] = "__random__",
+    ) -> Optional[np.ndarray]:
+        # background_id controls which background is used so scenes can be
+        # rebuilt deterministically from metadata:
+        #   "__random__" -> pick randomly (generation time); records the choice
+        #                   in self._last_background_id for the caller to persist
+        #   None         -> no background
+        #   "<filename>" -> use that specific background file (reproduction)
+        if background_id == "__random__":
+            if not self.background_files:
+                self._last_background_id = None
+                return None
+            # Randomly pick from backgrounds + "no background" as an equal option
+            choice = self.rng.randint(len(self.background_files) + 1)
+            if choice == len(self.background_files):
+                self._last_background_id = None
+                return None
+            path = self.background_files[choice]
+            self._last_background_id = os.path.basename(path)
+            background = np.load(path).astype(np.float32)
+            return fit_background_to_layout(background, layout)
 
-        # Randomly pick from backgrounds + "no background" as an equal option
-        choice = self.rng.randint(len(self.background_files) + 1)
-        if choice == len(self.background_files):
+        # Deterministic path: explicit id (or None)
+        self._last_background_id = background_id
+        if background_id is None:
             return None
-
-        background = np.load(self.background_files[choice]).astype(np.float32)
+        path = next((p for p in self.background_files
+                     if os.path.basename(p) == background_id), None)
+        if path is None:
+            raise FileNotFoundError(f"Background not found for reproduction: {background_id}")
+        background = np.load(path).astype(np.float32)
         return fit_background_to_layout(background, layout)
 
     def _compose_options(

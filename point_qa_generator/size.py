@@ -90,6 +90,7 @@ class WhatSizeGenerator(SizeGenerator):
                         "generator_type": task_plan.generator_type,
                         "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
+                        "background_id": self._last_background_id,
                         "layout_description": layout.get("description"),
                         "objects": [
                             {
@@ -182,6 +183,7 @@ class ListAttributeSizeGenerator(SizeGenerator):
                         "generator_type": task_plan.generator_type,
                         "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
+                        "background_id": self._last_background_id,
                         "layout_description": layout.get("description"),
                         "objects": [
                             {
@@ -281,6 +283,7 @@ class CountAttributeSizeGenerator(SizeGenerator):
                         "generator_type": task_plan.generator_type,
                         "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
+                        "background_id": self._last_background_id,
                         "layout_description": layout.get("description"),
                         "objects": [
                             {
@@ -381,6 +384,7 @@ class WhereSizeGenerator(SizeGenerator):
                         "generator_type": task_plan.generator_type,
                         "generator_config": task_plan.generator_config,
                         "layout_id": layout.get("id"),
+                        "background_id": self._last_background_id,
                         "layout_description": layout.get("description"),
                         "objects": [
                             {

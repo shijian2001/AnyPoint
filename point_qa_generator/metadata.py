@@ -1,5 +1,6 @@
 import json
 import os
+from collections import OrderedDict
 from typing import List, Dict, Any
 import numpy as np
 
@@ -7,7 +8,8 @@ import numpy as np
 class PointCloudMetadata:
     """Handles point cloud metadata."""
 
-    def __init__(self, jsonl_file: str, pcd_dir: str, seed: int = 42):
+    def __init__(self, jsonl_file: str, pcd_dir: str, seed: int = 42,
+                 cache_mb: int = 0):
         """
         Initialize metadata.
 
@@ -15,6 +17,11 @@ class PointCloudMetadata:
             jsonl_file: Path to JSONL metadata file
             pcd_dir: Directory containing point cloud .npy files
             seed: Random seed
+            cache_mb: per-instance LRU cache budget IN MEGABYTES for object point
+                clouds. The same ~20k objects recur across millions of scenes, so
+                caching hot ones avoids re-reading them from the (network) FS.
+                A byte budget (not a count) is used because object sizes vary 200x
+                (1MB..200MB), so a count-based cap could blow up memory. 0 disables.
         """
         self.jsonl_file = jsonl_file
         self.pcd_dir = pcd_dir
@@ -22,6 +29,9 @@ class PointCloudMetadata:
         self.attributes_file = os.path.join(
             os.path.dirname(os.path.abspath(jsonl_file)), "attributes_cache.json"
         )
+        self._cache_budget = int(cache_mb) * 1024 * 1024
+        self._cache_bytes = 0
+        self._pcd_cache = OrderedDict()  # object_id -> readonly ndarray
         self._load_metadata()
         self._load_or_create_attributes()
 
@@ -101,11 +111,31 @@ class PointCloudMetadata:
         return self.rng.choice(self.objects, size=num_samples, replace=False).tolist()
 
     def load_point_cloud(self, object_id: str) -> np.ndarray:
-        """Load point cloud for given object ID."""
+        """Load point cloud for given object ID (LRU-cached when enabled).
+
+        Cached arrays are returned read-only; callers must not mutate them in
+        place (transform_object_point_cloud builds new arrays, so it is safe).
+        """
+        if self._cache_budget > 0:
+            cached = self._pcd_cache.get(object_id)
+            if cached is not None:
+                self._pcd_cache.move_to_end(object_id)
+                return cached
+
         file_path = os.path.join(self.pcd_dir, f"{object_id}.npy")
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Point cloud file not found: {file_path}")
-        return np.load(file_path)
+        arr = np.load(file_path)
+
+        if self._cache_budget > 0 and arr.nbytes <= self._cache_budget:
+            arr.setflags(write=False)  # guard against in-place mutation
+            self._pcd_cache[object_id] = arr
+            self._cache_bytes += arr.nbytes
+            # Evict least-recently-used until back within the byte budget.
+            while self._cache_bytes > self._cache_budget and len(self._pcd_cache) > 1:
+                _, evicted = self._pcd_cache.popitem(last=False)
+                self._cache_bytes -= evicted.nbytes
+        return arr
 
     def load_glb_path(self, object_id: str) -> str:
         for obj in self.objects:

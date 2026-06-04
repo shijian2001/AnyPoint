@@ -27,8 +27,10 @@ class PointQAGenerator:
         layouts_file: str,
         seed: int = 42,
         background_dir: str = None,
+        cache_mb: int = 0,
     ):
-        self.metadata = PointCloudMetadata(metadata_file, pcd_dir, seed)
+        self.metadata = PointCloudMetadata(metadata_file, pcd_dir, seed,
+                                           cache_mb=cache_mb)
         self.metadata_file = metadata_file
         self.pcd_dir = pcd_dir
         self.layouts_file = layouts_file
@@ -225,24 +227,49 @@ class PointQAGenerator:
                 raise ValueError(f"Object metadata not found for object_id={object_id}")
             object_mapping[placeholder] = actual_obj
 
-        return self.generators[task.metadata["generator_type"]]._create_point_cloud_from_layout(
-            layout, object_mapping
+        # Use the recorded background so the scene is rebuilt bit-for-bit.
+        # Older metadata without background_id falls back to a random pick.
+        background_id = task.metadata.get("background_id", "__random__")
+        gen_type = task.metadata["generator_type"]
+        if isinstance(gen_type, (list, tuple)):  # tolerate list-typed metadata
+            gen_type = gen_type[0]
+        return self.generators[gen_type]._create_point_cloud_from_layout(
+            layout, object_mapping, background_id=background_id
         )
 
-    def generate(self, task_plan: TaskPlan, num_tasks: int, output_dir: str) -> Dict[str, Any]:
+    def generate(self, task_plan: TaskPlan, num_tasks: int, output_dir: str,
+                 num_points: Optional[int] = None) -> Dict[str, Any]:
         """Generate QA tasks and save to output directory.
 
         Unified interface: TaskPlan.generator_type can be a single str,
         a list of str (equal weight), or a dict of str->float (weighted).
         generator_config can be omitted for random variant selection.
         num_options can be int (fixed) or (min, max) tuple (random per batch).
+
+        num_points: if set, each scene point cloud is randomly downsampled to
+        this many points before saving (scenes with fewer points are kept as-is).
+        Default None = save full-resolution point cloud.
         """
         rng = np.random.RandomState(task_plan.seed)
+        # default_rng's choice(replace=False) is ~100x faster than legacy
+        # RandomState for large N (49ms -> 0.5ms per downsample). Only affects
+        # WHICH points are sampled (random anyway), not QA content or geometry.
+        sampler_rng = np.random.default_rng(task_plan.seed ^ 0x5DEECE66)
 
         gen_types = task_plan.resolve_generator_types()
         for gt in gen_types:
             if gt not in self.generators:
                 raise ValueError(f"Unknown generator type: {gt}")
+
+        # Re-seed each generator's own rng from this plan's seed. Without this,
+        # every generate() call (e.g. each parallel shard) reuses the rng state
+        # seeded at construction time with the shared base_seed, so all shards
+        # sample the *same* objects/templates and produce duplicate questions.
+        # Mixing the generator-type name keeps distinct types from colliding.
+        for gt in self.generators:
+            type_seed = (task_plan.seed
+                         + (int(hashlib.sha256(gt.encode()).hexdigest(), 16) & 0x7FFFFFFF)) % (2 ** 31)
+            self.generators[gt].rng = np.random.RandomState(type_seed)
 
         weights = task_plan.resolve_weights()
         if weights:
@@ -272,9 +299,18 @@ class PointQAGenerator:
             )
             plans_and_counts.append((gen_type, resolved_plan, n))
 
-        # Generate in parallel across generator types
+        # Generate in parallel across generator types.
+        # Dedup key is (question, answer, sorted options) rather than the
+        # question text alone: "same question text + different scene/answer" is a
+        # VALID distinct training sample (the model must read the point cloud to
+        # answer). Generators with a small question-text space (what_size,
+        # frequent_object) would otherwise be over-pruned, sending the fill loop
+        # below into a near-infinite retry that burns CPU producing nothing.
         all_results: List[Tuple[Task, np.ndarray, str]] = []
-        seen_questions: set = set()
+        seen_keys: set = set()
+
+        def _key(task):
+            return (task.question, task.answer, tuple(sorted(task.options)))
 
         def _run_generator(gen_type, plan, count):
             generator = self.generators[gen_type]
@@ -289,12 +325,18 @@ class PointQAGenerator:
                 gen_type, plan, results = future.result()
                 category = self._build_category(plan)
                 for task, pc in results:
-                    if task.question not in seen_questions:
-                        seen_questions.add(task.question)
+                    k = _key(task)
+                    if k not in seen_keys:
+                        seen_keys.add(k)
                         all_results.append((task, pc, category))
 
-        # If global dedup reduced count below target, fill from random generators
-        while len(all_results) < num_tasks:
+        # If global dedup reduced count below target, fill from random generators.
+        # Bail out after a bounded number of non-productive rounds so a generator
+        # whose unique-question space is genuinely exhausted cannot spin forever.
+        max_empty_rounds = 20
+        empty_rounds = 0
+        while len(all_results) < num_tasks and empty_rounds < max_empty_rounds:
+            before = len(all_results)
             fill_type = gen_types[rng.randint(len(gen_types))]
             variants = self.GENERATOR_VARIANTS[fill_type]
             config = variants[rng.randint(len(variants))]
@@ -302,18 +344,24 @@ class PointQAGenerator:
             fill_plan = TaskPlan(
                 generator_type=fill_type,
                 num_options=num_options,
-                seed=task_plan.seed + len(all_results),
+                seed=task_plan.seed + 100003 * (empty_rounds + 1) + len(all_results),
                 generator_config=config,
             )
             generator = self.generators[fill_type]
             results = generator.generate_tasks(fill_plan, num_tasks - len(all_results))
             category = self._build_category(fill_plan)
             for task, pc in results:
-                if task.question not in seen_questions:
-                    seen_questions.add(task.question)
+                k = _key(task)
+                if k not in seen_keys:
+                    seen_keys.add(k)
                     all_results.append((task, pc, category))
                     if len(all_results) >= num_tasks:
                         break
+            empty_rounds = 0 if len(all_results) > before else empty_rounds + 1
+
+        if len(all_results) < num_tasks:
+            print(f"  NOTE: produced {len(all_results)}/{num_tasks} unique tasks "
+                  f"(unique-question space exhausted for this seed/config)")
 
         all_results = all_results[:num_tasks]
 
@@ -332,7 +380,10 @@ class PointQAGenerator:
         all_scene_metadata = []
 
         for i, (task, point_cloud, category) in enumerate(all_results):
-            task.point = f"{i:06d}.npy"
+            task.point = f"{i:08d}.npy"
+            if num_points is not None and len(point_cloud) > num_points:
+                idx = sampler_rng.choice(len(point_cloud), size=num_points, replace=False)
+                point_cloud = point_cloud[idx]
             np.save(os.path.join(pcd_dir, task.point), point_cloud)
 
             if task.metadata:
@@ -344,10 +395,18 @@ class PointQAGenerator:
                         placeholder, obj_info["name"]
                     )
 
+                # Persist EVERY field needed to deterministically rebuild the
+                # scene point cloud via materialize_point_cloud():
+                # generator_type, generator_config, layout_id, background_id,
+                # and the placeholder->object_id mapping.
                 all_scene_metadata.append({
                     "scene_id": i,
                     "point_cloud": task.point,
+                    "generator_type": task.metadata.get("generator_type"),
+                    "generator_config": task.metadata.get("generator_config"),
                     "layout_id": task.metadata.get("layout_id"),
+                    "background_id": task.metadata.get("background_id"),
+                    "num_points_saved": len(point_cloud),
                     "layout_template": layout_template,
                     "layout_description": layout_description,
                     "objects": {
@@ -358,6 +417,7 @@ class PointQAGenerator:
 
             task_records.append({
                 "question_id": i,
+                "scene_id": i,
                 "point": task.point,
                 "category": category,
                 "question": task.question,
@@ -366,8 +426,9 @@ class PointQAGenerator:
             })
 
         if all_scene_metadata:
-            with open(os.path.join(pcd_dir, "metadata.json"), 'w', encoding='utf-8') as f:
-                json.dump(all_scene_metadata, f, indent=2, ensure_ascii=False)
+            with open(os.path.join(output_dir, "metadata.jsonl"), 'w', encoding='utf-8') as f:
+                for rec in all_scene_metadata:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
         tasks_file = os.path.join(output_dir, "tasks.jsonl")
         with open(tasks_file, 'w', encoding='utf-8') as f:

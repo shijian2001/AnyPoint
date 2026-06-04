@@ -170,6 +170,12 @@ cython_debug/
 output_test/
 local_tests/
 
+# Visualization outputs
+vis_output/
+
+# Runtime logs
+log/
+
 test.py
 
 test_vis_layout.py
