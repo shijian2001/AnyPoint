@@ -187,3 +187,12 @@ configs/
 !models/dependence/onellm/model/lib/**
 !models/dependence/onellm/data/
 !models/dependence/onellm/data/**
+
+# Re-exclude OneLLM build artifacts even though lib/ and data/ are whitelisted above
+models/dependence/onellm/**/__pycache__/
+models/dependence/onellm/**/*.pyc
+models/dependence/onellm/**/build/
+models/dependence/onellm/**/dist/
+models/dependence/onellm/**/*.egg-info/
+models/dependence/onellm/**/*.so
+models/dependence/onellm/**/*.o

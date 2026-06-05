@@ -1,0 +1,142 @@
+[
+  {
+    "object_id": "000000",
+    "conversation_type": "single_round",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<point>\nAnswer the following multiple-choice question from the 3D point cloud.\nQuestion: What is the object that is farthest from the 3D character model?\nOptions:\nA. character model\nB. military tiltrotor aircraft\nC. character\nD. bird\nReply with the final answer only."
+      },
+      {
+        "from": "gpt",
+        "value": "military tiltrotor aircraft"
+      }
+    ]
+  },
+  {
+    "object_id": "000001",
+    "conversation_type": "single_round",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<point>\nAnswer the following multiple-choice question from the 3D point cloud.\nQuestion: What is the object that is farthest from the building?\nOptions:\nA. building\nB. house\nC. bottle\nD. toy spinner stand\nReply with the final answer only."
+      },
+      {
+        "from": "gpt",
+        "value": "building"
+      }
+    ]
+  },
+  {
+    "object_id": "000002",
+    "conversation_type": "single_round",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<point>\nAnswer the following multiple-choice question from the 3D point cloud.\nQuestion: What is the object that is farthest from the short?\nOptions:\nA. humanoid creature\nB. creature\nC. character model\nD. Buddhist statue\nReply with the final answer only."
+      },
+      {
+        "from": "gpt",
+        "value": "humanoid creature"
+      }
+    ]
+  },
+  {
+    "object_id": "000003",
+    "conversation_type": "single_round",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<point>\nAnswer the following multiple-choice question from the 3D point cloud.\nQuestion: What is the object that is farthest from the Joshua tree?\nOptions:\nA. character\nB. table\nC. character\nD. humanoid creature\nReply with the final answer only."
+      },
+      {
+        "from": "gpt",
+        "value": "character"
+      }
+    ]
+  },
+  {
+    "object_id": "000004",
+    "conversation_type": "single_round",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<point>\nAnswer the following multiple-choice question from the 3D point cloud.\nQuestion: What is the object that is farthest from the pot?\nOptions:\nA. humanoid creature\nB. military tiltrotor aircraft\nC. 3D model\nD. creature\nReply with the final answer only."
+      },
+      {
+        "from": "gpt",
+        "value": "creature"
+      }
+    ]
+  },
+  {
+    "object_id": "000005",
+    "conversation_type": "single_round",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<point>\nAnswer the following multiple-choice question from the 3D point cloud.\nQuestion: What is the object that is farthest from the military tiltrotor aircraft?\nOptions:\nA. duffel bag\nB. character model\nC. toy spinner stand\nD. football trading card\nReply with the final answer only."
+      },
+      {
+        "from": "gpt",
+        "value": "football trading card"
+      }
+    ]
+  },
+  {
+    "object_id": "000006",
+    "conversation_type": "single_round",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<point>\nAnswer the following multiple-choice question from the 3D point cloud.\nQuestion: What is the object that is farthest from the building?\nOptions:\nA. bottle\nB. 3D model\nC. robot\nD. Stormtrooper\nReply with the final answer only."
+      },
+      {
+        "from": "gpt",
+        "value": "bottle"
+      }
+    ]
+  },
+  {
+    "object_id": "000007",
+    "conversation_type": "single_round",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<point>\nAnswer the following multiple-choice question from the 3D point cloud.\nQuestion: What is the object that is farthest from the house?\nOptions:\nA. house\nB. character model\nC. character\nD. military tiltrotor aircraft\nReply with the final answer only."
+      },
+      {
+        "from": "gpt",
+        "value": "character model"
+      }
+    ]
+  },
+  {
+    "object_id": "000008",
+    "conversation_type": "single_round",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<point>\nAnswer the following multiple-choice question from the 3D point cloud.\nQuestion: What is the object that is farthest from the military tiltrotor aircraft?\nOptions:\nA. creature\nB. Stormtrooper\nC. tribal warrior\nD. football trading card\nReply with the final answer only."
+      },
+      {
+        "from": "gpt",
+        "value": "Stormtrooper"
+      }
+    ]
+  },
+  {
+    "object_id": "000009",
+    "conversation_type": "single_round",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<point>\nAnswer the following multiple-choice question from the 3D point cloud.\nQuestion: What is the object that is farthest from the character?\nOptions:\nA. placeholder\nB. character\nC. character model\nD. radio receiver\nReply with the final answer only."
+      },
+      {
+        "from": "gpt",
+        "value": "placeholder"
+      }
+    ]
+  }
+]
