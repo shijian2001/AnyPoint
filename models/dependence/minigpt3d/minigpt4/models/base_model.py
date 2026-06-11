@@ -152,7 +152,7 @@ class BaseModel(nn.Module):
 
         point_encoder = PointTransformer(point_bert_config.model, use_max_pool=use_max_pool)
 
-        point_encoder.load_checkpoint("/home/wangxingjian/model/MiniGPT-3D/params_weight/pc_encoder/point_model.pth" )
+        point_encoder.load_checkpoint("/mnt/tidalfs-bdsz01/dataset/llm_ckpt/task/3d_data/point_models/minigpt3d/MiniGPT-3D/params_weight/pc_encoder/point_model.pth" )
 
         if precision == "fp16":
             #         model.to("cuda")

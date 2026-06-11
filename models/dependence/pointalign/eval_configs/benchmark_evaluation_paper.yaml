@@ -6,9 +6,9 @@ model:
   max_txt_len: 500  
   end_sym: "###"
   prompt_template: 'Instruct: {} /n Output: '
-  llama_model: "/home/wangxingjian/PointQA_Eval/cankao/PointAlign/params_weight/Phi_2"
-  ckpt: "/home/wangxingjian/PointQA_Eval/cankao/PointAlign/params_weight/pointalign/pretrain.pth"
-  second_ckpt: "/home/wangxingjian/PointQA_Eval/cankao/PointAlign/params_weight/pointalign/finetune.pth"
+  llama_model: "/mnt/tidalfs-bdsz01/dataset/llm_ckpt/task/3d_data/point_models/pointalign/PointAlign_weight/Phi_2"
+  ckpt: "/mnt/tidalfs-bdsz01/dataset/llm_ckpt/task/3d_data/point_models/pointalign/PointAlign_weight/pointalign/pretrain.pth"
+  second_ckpt: "/mnt/tidalfs-bdsz01/dataset/llm_ckpt/task/3d_data/point_models/pointalign/PointAlign_weight/pointalign/finetune.pth"
   lora_r: 64
   lora_alpha: 16
   pc_linear_layer: 2

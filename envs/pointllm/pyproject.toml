@@ -52,3 +52,13 @@ dependencies = [
 [tool.uv.sources]
 transformers = { git = "https://github.com/huggingface/transformers.git", rev = "cae78c46" }
 flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.3/flash_attn-2.6.3%2Bcu118torch2.0cxx11abiFALSE-cp39-cp39-linux_x86_64.whl" }
+# CUDA 11.7 wheels have no sm_90 kernels -> fail on H800 ("no kernel image").
+# cu118 (still runs on driver 550) adds Hopper support; torch version unchanged.
+torch = { index = "pytorch-cu118" }
+torchaudio = { index = "pytorch-cu118" }
+torchvision = { index = "pytorch-cu118" }
+
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true

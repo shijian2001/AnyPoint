@@ -221,7 +221,7 @@ class MiniGPT_3D(MiniGPTBase):
     def init_Qformer(cls, num_query_token, vision_width, freeze, QFormer_lora_r,
                      train_QFormer_norm, QFormer_lora_module):
 
-        encoder_config = BertConfig.from_pretrained("/home/wangxingjian/model/MiniGPT-3D/params_weight/bert-base-uncased")
+        encoder_config = BertConfig.from_pretrained("/mnt/tidalfs-bdsz01/dataset/llm_ckpt/task/3d_data/point_models/minigpt3d/MiniGPT-3D/params_weight/bert-base-uncased")
         # encoder_config = BertConfig.from_pretrained("bert-base-uncased")
 
         encoder_config.encoder_width = vision_width

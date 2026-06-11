@@ -60,8 +60,22 @@ dependencies = [
 ]
 
 
+# Resolve only for this linux cluster; avoids unsatisfiable macOS/arm64 splits
+# (pinned certifi etc. have no darwin wheels) when re-locking.
+[tool.uv]
+environments = ["sys_platform == 'linux'"]
+
+# Force the torch trio from cu118 (driver 550 caps at 12.9, but cu117 wheels
+# lack sm_90/Hopper kernels -> "no kernel image" on H800). torch versions unchanged.
+[tool.uv.sources]
+torch = { index = "pytorch-cu118" }
+torchaudio = { index = "pytorch-cu118" }
+torchvision = { index = "pytorch-cu118" }
+
 [[tool.uv.index]]
+name = "pytorch-cu118"
 url = "https://download.pytorch.org/whl/cu118"
+explicit = true
 
 [[tool.uv.index]]
 name = "tsinghua-pypi"

@@ -4,9 +4,9 @@ model:
   max_txt_len: 500  
   end_sym: "###"
   prompt_template: 'Instruct: {} /n Output: '
-  llama_model: "/home/wangxingjian/model/MiniGPT-3D/params_weight/Phi_2"
-  ckpt: '/home/wangxingjian/model/MiniGPT-3D/params_weight/MiniGPT_3D_stage_3/MiniGPT_3D_stage_3.pth'
-  second_ckpt: "/home/wangxingjian/model/MiniGPT-3D/params_weight/MiniGPT_3D_stage_4/MiniGPT_3D_stage_4.pth"
+  llama_model: "/mnt/tidalfs-bdsz01/dataset/llm_ckpt/task/3d_data/point_models/minigpt3d/MiniGPT-3D/params_weight/Phi_2"
+  ckpt: '/mnt/tidalfs-bdsz01/dataset/llm_ckpt/task/3d_data/point_models/minigpt3d/MiniGPT-3D/params_weight/MiniGPT_3D_stage_3/MiniGPT_3D_stage_3.pth'
+  second_ckpt: "/mnt/tidalfs-bdsz01/dataset/llm_ckpt/task/3d_data/point_models/minigpt3d/MiniGPT-3D/params_weight/MiniGPT_3D_stage_4/MiniGPT_3D_stage_4.pth"
   lora_r: 64
   lora_alpha: 16
   pc_linear_layer: 2

@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 from minigpt4.common.registry import registry
 from minigpt4.models.pointbert import misc
 
-tokenizer = AutoTokenizer.from_pretrained("/home/wangxingjian/model/MiniGPT-3D/params_weight/Phi_2")
+tokenizer = AutoTokenizer.from_pretrained("/mnt/tidalfs-bdsz01/dataset/llm_ckpt/task/3d_data/point_models/minigpt3d/MiniGPT-3D/params_weight/Phi_2")
 
 
 class SeparatorStyle(Enum):

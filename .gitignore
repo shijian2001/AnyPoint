@@ -187,3 +187,9 @@ configs/
 !models/dependence/onellm/model/lib/**
 !models/dependence/onellm/data/
 !models/dependence/onellm/data/**
+
+# Allow MiniGPT-3D / PointAlign framework configs caught by the generic `configs/` rule above
+!models/dependence/minigpt3d/minigpt4/configs/
+!models/dependence/minigpt3d/minigpt4/configs/**
+!models/dependence/pointalign/minigpt4/configs/
+!models/dependence/pointalign/minigpt4/configs/**

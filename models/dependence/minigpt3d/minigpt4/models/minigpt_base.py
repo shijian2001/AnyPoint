@@ -11,7 +11,7 @@ from transformers import StoppingCriteria, StoppingCriteriaList
 
 from minigpt4.conversation.conversation import StoppingCriteriaSub
 from transformers import AutoTokenizer
-tokenizer = AutoTokenizer.from_pretrained("/home/wangxingjian/model/MiniGPT-3D/params_weight/Phi_2")
+tokenizer = AutoTokenizer.from_pretrained("/mnt/tidalfs-bdsz01/dataset/llm_ckpt/task/3d_data/point_models/minigpt3d/MiniGPT-3D/params_weight/Phi_2")
 
 class MiniGPTBase(BaseModel):
     """

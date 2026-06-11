@@ -7,22 +7,23 @@ cd "$(dirname "$0")"
 
 export CUDA_VISIBLE_DEVICES=4,5
 export HF_ENDPOINT=https://hf-mirror.com
-export SENTENCE_TRANSFORMERS_HOME=/home/wangxingjian/model
+export SENTENCE_TRANSFORMERS_HOME=<MODEL_DIR>
 
 # ----------------------------------------------------------------------------
-# Available --strategies values (always run alongside the implicit "random" baseline):
+# Available --strategies values (always run alongside the implicit "random" baseline).
+# error = max_sim(t, errors), correct = max_sim(t, correct); λ = explore/exploit weight.
 #   utility-guided (UTILITY_STRATEGIES):
-#     dynamic        : U = A - λ·R                          (subtractive)
-#     dynamic_mul    : U = A · (1 - λ·R)                    (heuristic mul gating)
-#     dynamic_geo    : U = A^(1-λ) · (1-R)^λ, λ∈[0,1]      (weighted geo mean, exp form)
-#     dynamic_geo_log: log U = (1-λ)·log A + λ·log(1-R)     (= geo, log-space — argmax-equivalent, more stable)
-#     affinity_only  : U = A
-#     novelty_only   : U = log(1 - R)
+#     tradeoff     : U = error^(1-λ) · (1-correct)^λ   (DEFAULT; λ balances exploit vs explore)
+#     tradeoff_log : log U = (1-λ)·log(error) + λ·log(1-correct)  (= tradeoff, log-space, stabler)
+#     linear       : U = error - λ·correct
+#     gated        : U = error · (1 - λ·correct)
+#     exploit_only : U = error                       (only chase errors)
+#     explore_only : U = log(1 - correct)             (only flee solved regions)
 #   external baselines (BASELINE_STRATEGIES):
 #     acd_style, autobencher_style, sea_style
 #
 # Shortcuts: 'all' (default), 'utility', 'baselines', or comma list e.g.
-#   --strategies dynamic_geo,dynamic,dynamic_mul
+#   --strategies tradeoff,tradeoff_log
 # ----------------------------------------------------------------------------
 
 
@@ -47,19 +48,19 @@ export SENTENCE_TRANSFORMERS_HOME=/home/wangxingjian/model
 
 # PointLLM
 python3 compare_eval_strategies.py \
-  --metadata /home/wangxingjian/data/point_cloud/texverse_metadata_000-000.jsonl \
-  --pcd-dir /home/wangxingjian/data/point_cloud/npys_2k/000-000 \
-  --background-dir /home/wangxingjian/data/point_cloud/background \
-  --layouts /home/wangxingjian/AnyPoint/outputs_gpt_oss/layouts.json \
+  --metadata <DATA_DIR>/texverse_metadata_000-000.jsonl \
+  --pcd-dir <DATA_DIR>/npys_2k/000-000 \
+  --background-dir <DATA_DIR>/background \
+  --layouts <DATA_DIR>/layouts.json \
   --model pointllm \
-  --checkpoint /home/wangxingjian/model/PointLLM_7B_v1.2 \
-  --output /home/wangxingjian/AnyPoint/output/pointllm \
+  --checkpoint <MODEL_DIR>/PointLLM_7B_v1.2 \
+  --output <OUTPUT_DIR>/pointllm \
   --devices cuda:0,cuda:1 \
   --budget 200 \
   --batch-size 10 \
   --pool-size 1000 \
-  --pool-cache-dir /home/wangxingjian/AnyPoint/output/task_pool_cache \
-  --strategies dynamic_geo,dynamic_geo_log \
+  --pool-cache-dir <OUTPUT_DIR>/task_pool_cache \
+  --strategies tradeoff,tradeoff_log \
   --lambda-explore 0.2
 
 # OneLLM
