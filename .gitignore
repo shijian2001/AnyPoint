@@ -197,8 +197,13 @@ keys.env
 *.key
 secrets*
 
-# build artifacts (re-excluded even under whitelisted onellm source dirs)
+# build artifacts (re-excluded even under whitelisted source dirs)
 **/__pycache__/
 **/*.egg-info/
+**/*.pyc
 models/dependence/onellm/model/lib/pointnet2/build/
 models/dependence/onellm/model/lib/pointnet2/dist/
+models/dependence/onellm/**/build/
+models/dependence/onellm/**/dist/
+models/dependence/onellm/**/*.so
+models/dependence/onellm/**/*.o
