@@ -193,3 +193,12 @@ configs/
 !models/dependence/minigpt3d/minigpt4/configs/**
 !models/dependence/pointalign/minigpt4/configs/
 !models/dependence/pointalign/minigpt4/configs/**
+keys.env
+*.key
+secrets*
+
+# build artifacts (re-excluded even under whitelisted onellm source dirs)
+**/__pycache__/
+**/*.egg-info/
+models/dependence/onellm/model/lib/pointnet2/build/
+models/dependence/onellm/model/lib/pointnet2/dist/

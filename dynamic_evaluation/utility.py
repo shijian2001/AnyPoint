@@ -99,11 +99,21 @@ class UtilityCalculator:
         v_correct: Optional[np.ndarray],
         v_errors: Optional[np.ndarray],
     ) -> np.ndarray:
-        """Score candidates under one named strategy."""
-        error = np.clip(self._max_sim(v_candidates, v_errors), 0.0, 1.0)
-        correct = np.clip(self._max_sim(v_candidates, v_correct), 0.0, 1.0)
-        lam = self.lambda_explore
+        """Score candidates under one named strategy (computes similarities first)."""
+        error = self._max_sim(v_candidates, v_errors)
+        correct = self._max_sim(v_candidates, v_correct)
+        return self.score(strategy, error, correct)
 
+    def score(self, strategy: str, error: np.ndarray, correct: np.ndarray) -> np.ndarray:
+        """Apply a strategy's utility formula to PRECOMPUTED similarity arrays.
+
+        ``error`` = max_sim(t, errors), ``correct`` = max_sim(t, correct). Lets callers
+        that maintain similarities incrementally (e.g. a fixed 1M pool) reuse the exact
+        same formulas without recomputing max-sim here.
+        """
+        error = np.clip(error, 0.0, 1.0)
+        correct = np.clip(correct, 0.0, 1.0)
+        lam = self.lambda_explore
         if strategy == "linear":
             return self._linear(error, correct, lam)
         if strategy == "gated":
@@ -112,11 +122,10 @@ class UtilityCalculator:
             return self._tradeoff(error, correct, lam)
         if strategy == "tradeoff_log":
             return self._tradeoff_log(error, correct, lam)
-        if strategy == "exploit_only":   # only chase errors: U = error
+        if strategy == "exploit_only":   # only chase errors: U = error  (== tradeoff λ=0)
             return error
-        if strategy == "explore_only":   # only flee solved regions: U = log(1 - correct)
-            return np.log(np.clip(1.0 - correct, _EPS, 1.0))
-
+        if strategy == "explore_only":   # only flee solved regions: U = 1 - correct  (== tradeoff λ=1, no log)
+            return 1.0 - correct
         raise ValueError(f"Unknown utility strategy: {strategy}")
 
     @staticmethod

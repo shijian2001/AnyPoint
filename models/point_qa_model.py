@@ -33,6 +33,7 @@ class PointQAModel(QAModel):
         choice_format: str = 'letter',
         cache_path: str = None,
         device: str = None,
+        enable_choice_search: bool = True,
         **kwargs,
     ):
         if prompt_func is None:
@@ -43,7 +44,9 @@ class PointQAModel(QAModel):
             prompt_name=prompt_name,
             prompt_func=prompt_func,
             choice_format=choice_format,
-            enable_choice_search=True,
+            # judge-based grading doesn't use the SBERT choice_search; callers that
+            # still rely on string matching keep the default True.
+            enable_choice_search=enable_choice_search,
             cache_path=cache_path,
         )
 
@@ -102,7 +105,8 @@ class ShapeLLM(QAModelInstance):
         self.top_k = kwargs.get('top_k', 1)
         self.top_p = kwargs.get('top_p', None)
         self.num_beams = kwargs.get('num_beams', 1)
-        self.max_new_tokens = kwargs.get('max_new_tokens', 2048)
+        # Official ShapeLLM eval (llava/eval/eval_objaverse.py:114) uses max_new_tokens=1024.
+        self.max_new_tokens = kwargs.get('max_new_tokens', 1024)
         self.recon_path = kwargs.get('recon_path')
         self.EVA_path = kwargs.get('EVA_path')
 
@@ -206,10 +210,13 @@ class PointLLM(QAModelInstance):
             raise ValueError("PointLLM requires checkpoint_path")
         
         self.conv_mode = kwargs.get('conv_mode', 'vicuna_v1_1')
-        self.temperature = kwargs.get('temperature', 0.2)
-        self.top_p = kwargs.get('top_p', None)
+        # Official PointLLM benchmark eval (pointllm/eval/eval_objaverse.py:58,118):
+        # do_sample=True, temperature=1.0, top_k=50, top_p=0.95, max_length=2048.
+        # (top_k=50 is HF's default and is applied since this wrapper doesn't override it.)
+        self.temperature = kwargs.get('temperature', 1.0)
+        self.top_p = kwargs.get('top_p', 0.95)
         self.num_beams = kwargs.get('num_beams', 1)
-        self.max_new_tokens = kwargs.get('max_new_tokens', 512)
+        self.max_new_tokens = kwargs.get('max_new_tokens', 2048)
         self.num_points = int(kwargs.get('num_points', 8192))
 
         from models.dependence.pointllm.model import PointLLMLlamaForCausalLM
@@ -254,13 +261,24 @@ class PointLLM(QAModelInstance):
         pc = self.pc_norm(pc)
         return torch.from_numpy(pc).float().to(self.device)
 
+    def _with_point_tokens(self, prompt: str) -> str:
+        """Prepend the point placeholder tokens so the model actually splices in the
+        point features. Without this, the cloud is loaded but never attended to and the
+        model answers from text priors alone. Mirrors official PointLLM eval
+        (eval_modelnet_cls.py / PointLLM_chat.py)."""
+        pbc = self.model.get_model().point_backbone_config
+        patch = pbc['default_point_patch_token'] * pbc['point_token_len']
+        if pbc['mm_use_point_start_end']:
+            patch = pbc['default_point_start_token'] + patch + pbc['default_point_end_token']
+        return patch + '\n' + prompt
+
     def qa(self, data: Dict[str, Any], prompt: str) -> str:
         point_cloud = data.get('point_cloud') or data.get('point_cloud_path')
         if point_cloud is None:
             raise ValueError('Point cloud is required for PointLLM evaluation')
 
         conv = self.conv_templates[self.conv_mode].copy()
-        conv.append_message(conv.roles[0], prompt)
+        conv.append_message(conv.roles[0], self._with_point_tokens(prompt))
         conv.append_message(conv.roles[1], None)
         prompt_text = conv.get_prompt()
 
@@ -295,7 +313,7 @@ class PointLLM(QAModelInstance):
         prompt_texts = []
         for prompt in prompts:
             conv = self.conv_templates[self.conv_mode].copy()
-            conv.append_message(conv.roles[0], prompt)
+            conv.append_message(conv.roles[0], self._with_point_tokens(prompt))
             conv.append_message(conv.roles[1], None)
             prompt_texts.append(conv.get_prompt())
 
@@ -357,7 +375,7 @@ class MiniGPT3D(QAModelInstance):
         self.repetition_penalty = kwargs.get('repetition_penalty', 1.0)
         self.length_penalty = kwargs.get('length_penalty', 1.0)
         self.temperature = kwargs.get('temperature', 0.2)
-        self.do_sample = kwargs.get('do_sample', False)
+        self.do_sample = kwargs.get('do_sample', True)  # official MiniGPT-3D/PointAlign eval_objaverse.py:190 -> do_sample=True
         self.num_points = int(kwargs.get('num_points', 8192))
 
         from minigpt4.common.eval_utils import init_model, prepare_texts
@@ -365,7 +383,10 @@ class MiniGPT3D(QAModelInstance):
         
         self.prepare_texts = prepare_texts
         self.conv_temp = CONV_VISION.copy()
-        # self.conv_temp.system = ""
+        # Official MiniGPT-3D eval clears the system prompt (eval_modelnet_cls.py); leaving
+        # the default system prompt makes the model emit the stop sign '###' immediately,
+        # which the '###'-split decode then turns into an empty string.
+        self.conv_temp.system = ""
 
         gpu_id = 0
         if isinstance(self.device, str) and self.device.startswith('cuda'):
@@ -490,7 +511,7 @@ class PointAlign(QAModelInstance):
         self.repetition_penalty = kwargs.get('repetition_penalty', 1.0)
         self.length_penalty = kwargs.get('length_penalty', 1.0)
         self.temperature = kwargs.get('temperature', 0.2)
-        self.do_sample = kwargs.get('do_sample', False)
+        self.do_sample = kwargs.get('do_sample', True)  # official MiniGPT-3D/PointAlign eval_objaverse.py:190 -> do_sample=True
         self.num_points = int(kwargs.get('num_points', 8192))
 
         for name, path in [
@@ -765,7 +786,8 @@ class OneLLM(QAModelInstance):
             raise ValueError("OneLLM requires checkpoint_path")
 
         self.dtype_name = kwargs.get('dtype', 'fp16')
-        self.max_new_tokens = int(kwargs.get('max_new_tokens', 256))
+        # Official OneLLM point-cloud eval (eval/point_cap_pointllm.py:69): max_gen_len=128, temp=0.1, top_p=0.75.
+        self.max_new_tokens = int(kwargs.get('max_new_tokens', 128))
         self.temperature = float(kwargs.get('temperature', 0.1))
         self.top_p = float(kwargs.get('top_p', 0.75))
         self.point_format = kwargs.get('point_format', 'xyzrgb')

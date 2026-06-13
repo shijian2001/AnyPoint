@@ -20,7 +20,14 @@ class EvalConfig:
     pool_size: int                      # N: Fixed candidate pool size
     lambda_explore: float = 0.2         # λ: Exploration weight
     seed: int = 42
-    
+    # Selection strategy: tradeoff (our method, λ) | exploit_only | explore_only
+    #                     | random | acd_style | autobencher_style | sea_style
+    strategy: str = "tradeoff"
+    # Fixed-pool source: load candidates from this index instead of generating.
+    pool_index_path: Optional[str] = None   # e.g. .../eval_pool_1m.jsonl (has layout)
+    dataset_root: Optional[str] = None       # root that `point` paths are relative to
+    emb_dir: Optional[str] = None            # precomputed embeddings dir (anypoint_2m_emb)
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
